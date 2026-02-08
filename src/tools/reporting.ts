@@ -9,32 +9,8 @@
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { npsApi, formatToolError } from "../client.js";
-import { platformName, sessionStatusLabel } from "../types.js";
-
-interface NpsSessionSummary {
-  id: string;
-  status: number;
-  statusDescription: string;
-  createdByUserName?: string;
-  createdDateTimeUtc?: string;
-  loginAccountName?: string;
-  activityId?: string;
-  activity?: { name?: string; activityType?: number };
-  managedResourceId?: string;
-  managedResource?: {
-    name?: string;
-    displayName?: string;
-    platformId?: string;
-    ipAddress?: string;
-  };
-  accessControlPolicy?: { name?: string };
-  scheduledStartDateTimeUtc?: string;
-  scheduledEndDateTimeUtc?: string;
-  actualStartDateTimeUtc?: string;
-  actualEndDateTimeUtc?: string;
-  note?: string;
-  ticket?: string;
-}
+import { platformName, formatDuration } from "../types.js";
+import type { SessionSearchResults } from "../types.js";
 
 interface NpsManagedAccountSearch {
   data: Array<{
@@ -59,87 +35,97 @@ export function registerReportingTools(server: McpServer): void {
    */
   server.tool(
     "nps_session_report",
-    "Generate a session activity report. Summarizes sessions by status, user, resource, and activity over a given time period. Great for auditing who accessed what and when.",
+    "Generate a session activity report with server-side analytics. Uses the Search endpoint for duration stats, top user breakdowns, and filtered results. Great for auditing who accessed what, when, and for how long.",
     {
       days: z
         .number()
         .optional()
         .default(7)
         .describe("Number of days to look back (default: 7)"),
-      user: z
+      filterText: z
         .string()
         .optional()
-        .describe("Filter by username (partial match)"),
-      resource: z
-        .string()
+        .describe("Filter by username, resource, or activity (server-side search)"),
+      topUsers: z
+        .enum(["None", "Top5", "Top10", "Everyone"])
         .optional()
-        .describe("Filter by resource name (partial match)"),
+        .default("Top10")
+        .describe("Top user analytics breakdown (default: Top10)"),
     },
-    async ({ days, user, resource }) => {
+    async ({ days, filterText, topUsers }) => {
       try {
-        const sessions = await npsApi<NpsSessionSummary[]>(
-          "/api/v1/ActivitySession"
-        );
-
+        const now = new Date();
         const cutoff = new Date();
         cutoff.setDate(cutoff.getDate() - days);
 
-        let filtered = sessions.filter((s) => {
-          const created = s.createdDateTimeUtc
-            ? new Date(s.createdDateTimeUtc)
-            : null;
-          return created && created >= cutoff;
-        });
+        const params: Record<string, string | number | boolean | undefined> = {
+          filterDateTimeMin: cutoff.toISOString(),
+          filterDateTimeMax: now.toISOString(),
+          filterTopUsersType: topUsers,
+          orderBy: "createdDateTimeUtc",
+          orderDescending: true,
+          skip: 0,
+          take: 50,
+        };
+        if (filterText) params.filterText = filterText;
 
-        if (user) {
-          const term = user.toLowerCase();
-          filtered = filtered.filter(
-            (s) =>
-              s.createdByUserName?.toLowerCase().includes(term) ||
-              s.loginAccountName?.toLowerCase().includes(term)
-          );
-        }
+        const result = await npsApi<SessionSearchResults>(
+          "/api/v1/ActivitySession/Search",
+          { params }
+        );
 
-        if (resource) {
-          const term = resource.toLowerCase();
-          filtered = filtered.filter(
-            (s) =>
-              s.managedResource?.name?.toLowerCase().includes(term) ||
-              s.managedResource?.displayName?.toLowerCase().includes(term)
-          );
-        }
+        const sessions = result.data ?? [];
+        const total = result.recordsTotal ?? sessions.length;
+        const summary = result.summary;
 
-        if (filtered.length === 0) {
+        if (total === 0) {
           return {
             content: [
               {
                 type: "text",
-                text: `No sessions found in the last ${days} day(s) matching your filters.`,
+                text: `No sessions found in the last ${days} day(s)${filterText ? ` matching "${filterText}"` : ""}.`,
               },
             ],
           };
         }
 
-        // Aggregate stats
+        let report = `Session Report — Last ${days} day(s)\n`;
+        report += `Total sessions matched: ${total}\n`;
+
+        // Duration statistics from server
+        if (summary) {
+          report += `\nDuration Statistics:\n`;
+          report += `  Total: ${formatDuration(summary.sumDurationInSeconds)}\n`;
+          report += `  Average: ${formatDuration(summary.avgDurationInSeconds)}\n`;
+          report += `  Min: ${formatDuration(summary.minDurationInSeconds)}\n`;
+          report += `  Max: ${formatDuration(summary.maxDurationInSeconds)}\n`;
+        }
+
+        // Top users from server analytics
+        const topUserList = result.topUsers ?? [];
+        if (topUserList.length > 0) {
+          report += `\nTop Users:\n`;
+          for (const u of topUserList) {
+            const name = u.userName ?? "Unknown";
+            const count = u.sessionCount ?? 0;
+            const dur = formatDuration(u.totalDurationInSeconds);
+            report += `  ${name}: ${count} session(s), ${dur} total\n`;
+          }
+        }
+
+        // Aggregate by status and resource from the returned page
         const byStatus: Record<string, number> = {};
-        const byUser: Record<string, number> = {};
         const byResource: Record<string, number> = {};
         const byActivity: Record<string, number> = {};
 
-        for (const s of filtered) {
-          const statusKey = s.statusDescription || `Status ${s.status}`;
+        for (const s of sessions) {
+          const statusKey = s.statusDescription ?? s.status ?? "Unknown";
           byStatus[statusKey] = (byStatus[statusKey] || 0) + 1;
 
-          const userKey = s.createdByUserName || "Unknown";
-          byUser[userKey] = (byUser[userKey] || 0) + 1;
-
-          const resKey =
-            s.managedResource?.displayName ||
-            s.managedResource?.name ||
-            "Unknown";
+          const resKey = s.managedResourceName ?? "Unknown";
           byResource[resKey] = (byResource[resKey] || 0) + 1;
 
-          const actKey = s.activity?.name || "Unknown";
+          const actKey = s.activityName ?? "Unknown";
           byActivity[actKey] = (byActivity[actKey] || 0) + 1;
         }
 
@@ -149,27 +135,21 @@ export function registerReportingTools(server: McpServer): void {
             .map(([k, v]) => `  ${k}: ${v}`)
             .join("\n");
 
-        let report = `Session Report — Last ${days} day(s)\n`;
-        report += `Total sessions: ${filtered.length}\n`;
-        report += `\nBy Status:\n${sortedEntries(byStatus)}`;
-        report += `\n\nBy User:\n${sortedEntries(byUser)}`;
+        report += `\nBy Status (from ${sessions.length} shown):\n${sortedEntries(byStatus)}`;
         report += `\n\nTop Resources:\n${sortedEntries(byResource)}`;
         report += `\n\nTop Activities:\n${sortedEntries(byActivity)}`;
 
-        // Failed sessions detail
-        const failed = filtered.filter((s) => s.status >= 4);
-        if (failed.length > 0) {
-          report += `\n\nFailed Sessions (${failed.length}):\n`;
-          for (const s of failed.slice(0, 10)) {
-            const res =
-              s.managedResource?.displayName ||
-              s.managedResource?.name ||
-              "Unknown";
-            report += `  • ${s.id.substring(0, 8)}... — ${res} — ${s.statusDescription} (${s.createdByUserName || "?"})\n`;
-          }
-          if (failed.length > 10) {
-            report += `  ... and ${failed.length - 10} more\n`;
-          }
+        // Recent sessions with duration
+        report += `\n\nRecent Sessions:\n`;
+        for (const s of sessions.slice(0, 15)) {
+          const res = s.managedResourceName ?? "Unknown";
+          const user = s.createdByUserName ?? "?";
+          const dur = formatDuration(s.durationInSeconds);
+          const status = s.statusDescription ?? s.status ?? "";
+          report += `  • ${s.id.substring(0, 8)}... — ${res} — ${user} — ${dur} — ${status}\n`;
+        }
+        if (total > 15) {
+          report += `  ... ${total - 15} more. Use nps_search_sessions for paginated results.\n`;
         }
 
         return { content: [{ type: "text", text: report }] };

@@ -84,3 +84,81 @@ export function sessionStatusLabel(status: number): string {
       return `Status ${status}`;
   }
 }
+
+/**
+ * Format seconds into human-readable duration (e.g. "1h 5m 30s")
+ */
+export function formatDuration(seconds: number | null | undefined): string {
+  if (seconds == null || seconds < 0) return "N/A";
+  if (seconds === 0) return "0s";
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.round(seconds % 60);
+  const parts: string[] = [];
+  if (h > 0) parts.push(`${h}h`);
+  if (m > 0) parts.push(`${m}m`);
+  if (s > 0 || parts.length === 0) parts.push(`${s}s`);
+  return parts.join(" ");
+}
+
+/**
+ * A single log line from GET /api/v1/ActivitySession/{id}/Log
+ */
+export interface ActionLogLine {
+  statusString?: string;
+  logMessage?: string;
+  lineNumber?: number;
+  timestamp?: string;
+}
+
+/**
+ * Response from GET /api/v1/ActivitySession/{id}/Log
+ */
+export interface ActionLogCollection {
+  lines?: ActionLogLine[];
+  totalCount?: number;
+}
+
+/**
+ * A session record from GET /api/v1/ActivitySession/Search
+ */
+export interface SessionSummaryRecord {
+  id: string;
+  status?: string;
+  statusDescription?: string;
+  createdByUserName?: string;
+  createdDateTimeUtc?: string;
+  loginAccountName?: string;
+  activityName?: string;
+  managedResourceName?: string;
+  platformName?: string;
+  accessPolicyName?: string;
+  durationInSeconds?: number;
+  sessionExtensionCount?: number;
+  actualStartDateTimeUtc?: string;
+  actualEndDateTimeUtc?: string;
+  scheduledStartDateTimeUtc?: string;
+  scheduledEndDateTimeUtc?: string;
+  note?: string;
+  ticket?: string;
+}
+
+/**
+ * Response from GET /api/v1/ActivitySession/Search
+ */
+export interface SessionSearchResults {
+  data: SessionSummaryRecord[];
+  recordsTotal: number;
+  topUsers?: Array<{
+    userName?: string;
+    sessionCount?: number;
+    totalDurationInSeconds?: number;
+  }>;
+  summary?: {
+    countSessions?: number;
+    sumDurationInSeconds?: number;
+    avgDurationInSeconds?: number;
+    minDurationInSeconds?: number;
+    maxDurationInSeconds?: number;
+  };
+}

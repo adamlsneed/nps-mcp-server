@@ -9,6 +9,7 @@ import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { npsApi, formatToolError } from "../client.js";
 import { isRdpPlatform, platformName, sessionStatusLabel } from "../types.js";
+import type { ActionLogCollection } from "../types.js";
 
 // Subset of the (very verbose) ActivitySession response
 interface NpsActivitySession {
@@ -191,16 +192,26 @@ export function registerSessionTools(server: McpServer): void {
 
         let text = formatSession(session);
 
-        // If session failed (status > 1 and not running), fetch logs
+        // If session ended (completed/failed), fetch recent logs
         if (session.status > 1) {
           try {
-            const logs = await npsApi<unknown[]>(
-              `/api/v1/ActivitySession/${sessionId}/Log`
+            const logData = await npsApi<ActionLogCollection>(
+              `/api/v1/ActivitySession/${sessionId}/Log`,
+              { params: { skip: 0, take: 10 } }
             );
-            if (logs && logs.length > 0) {
-              text += `\nSession Logs:\n`;
-              // Format log entries — structure TBD from actual API response
-              text += JSON.stringify(logs, null, 2).substring(0, 2000);
+            const lines = logData?.lines ?? [];
+            const totalCount = logData?.totalCount ?? lines.length;
+            if (lines.length > 0) {
+              text += `\nRecent Logs (last ${lines.length} of ${totalCount}):\n`;
+              for (const line of lines) {
+                const ts = line.timestamp ? line.timestamp.replace("T", " ").substring(0, 19) : "";
+                const status = line.statusString ?? "";
+                const msg = line.logMessage ?? "";
+                text += `  [${ts}] [${status}] ${msg}\n`;
+              }
+              if (totalCount > lines.length) {
+                text += `  ... Use nps_session_logs for full history (${totalCount} total entries)\n`;
+              }
             }
           } catch {
             text += `\n(Could not retrieve session logs)`;
@@ -375,17 +386,32 @@ export function registerSessionTools(server: McpServer): void {
    */
   server.tool(
     "nps_session_logs",
-    "Get detailed action queue logs for an activity session. Useful for troubleshooting failed or problematic sessions.",
+    "Get detailed action queue logs for an activity session. Supports pagination and filtering. Useful for troubleshooting failed or problematic sessions.",
     {
       sessionId: z.string().describe("The activity session ID (GUID)"),
+      skip: z.number().optional().default(0).describe("Number of log entries to skip (default: 0)"),
+      take: z.number().optional().default(100).describe("Number of log entries to return (default: 100)"),
+      logLevel: z.string().optional().describe("Filter by log level (e.g., 'Error', 'Warning')"),
+      filterText: z.string().optional().describe("Filter log messages by text"),
     },
-    async ({ sessionId }) => {
+    async ({ sessionId, skip, take, logLevel, filterText }) => {
       try {
-        const logs = await npsApi<unknown[]>(
-          `/api/v1/ActivitySession/${sessionId}/Log`
+        const params: Record<string, string | number | boolean | undefined> = {
+          skip,
+          take,
+        };
+        if (logLevel) params.logLevel = logLevel;
+        if (filterText) params.filterText = filterText;
+
+        const logData = await npsApi<ActionLogCollection>(
+          `/api/v1/ActivitySession/${sessionId}/Log`,
+          { params }
         );
 
-        if (!logs || logs.length === 0) {
+        const lines = logData?.lines ?? [];
+        const totalCount = logData?.totalCount ?? lines.length;
+
+        if (lines.length === 0) {
           return {
             content: [
               { type: "text", text: `No logs found for session ${sessionId}.` },
@@ -393,16 +419,22 @@ export function registerSessionTools(server: McpServer): void {
           };
         }
 
-        // Format logs — structure will be refined once we see actual responses
-        const formatted = JSON.stringify(logs, null, 2);
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Session logs for ${sessionId}:\n\n${formatted}`,
-            },
-          ],
-        };
+        let text = `Session logs for ${sessionId} (${lines.length} of ${totalCount} entries`;
+        if (skip > 0) text += `, skipped ${skip}`;
+        text += `):\n\n`;
+
+        for (const line of lines) {
+          const ts = line.timestamp ? line.timestamp.replace("T", " ").substring(0, 19) : "";
+          const status = line.statusString ?? "";
+          const msg = line.logMessage ?? "";
+          text += `[${ts}] [${status}] ${msg}\n`;
+        }
+
+        if (skip + lines.length < totalCount) {
+          text += `\n... ${totalCount - skip - lines.length} more entries. Use skip=${skip + take} to continue.`;
+        }
+
+        return { content: [{ type: "text", text }] };
       } catch (error) {
         return {
           content: [{ type: "text", text: formatToolError(error) }],

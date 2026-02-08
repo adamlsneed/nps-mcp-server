@@ -65,6 +65,7 @@ import { registerCredentialTools } from "./tools/credentials.js";
 import { registerReportingTools } from "./tools/reporting.js";
 import { registerPlatformTools } from "./tools/platforms.js";
 import { registerAdminTools } from "./tools/admin.js";
+import { registerAuditTools } from "./tools/audit.js";
 
 async function main() {
   const server = new McpServer({
@@ -84,6 +85,7 @@ async function main() {
   registerReportingTools(server);
   registerPlatformTools(server);
   registerAdminTools(server);
+  registerAuditTools(server);
 
   // Connect via stdio transport (for Claude Code / Claude Desktop)
   const transport = new StdioServerTransport();
