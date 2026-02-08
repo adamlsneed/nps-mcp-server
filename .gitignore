@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment (contains credentials)
+.env
+
+# Cloned reference repos (not our code)
+reference/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# TypeScript cache
+*.tsbuildinfo
