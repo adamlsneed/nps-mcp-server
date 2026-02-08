@@ -19,6 +19,8 @@ interface NpsManagedResource {
   host?: { hostName?: string; ipAddress?: string };
   domainConfigId?: string;
   serviceAccountId?: string;
+  dnsHostName?: string;
+  hostName?: string;
   portSsh?: number;
   portRdp?: number;
   portWinRm?: number;
@@ -69,9 +71,11 @@ export function registerResourceTools(server: McpServer): void {
           const term = search.toLowerCase();
           filtered = resources.filter(
             (r) =>
-              r.name.toLowerCase().includes(term) ||
+              r.name?.toLowerCase().includes(term) ||
               r.displayName?.toLowerCase().includes(term) ||
-              r.ipAddress?.toLowerCase().includes(term)
+              r.ipAddress?.toLowerCase().includes(term) ||
+              r.dnsHostName?.toLowerCase().includes(term) ||
+              r.hostName?.toLowerCase().includes(term)
           );
         }
 
