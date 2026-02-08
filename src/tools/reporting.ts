@@ -95,10 +95,10 @@ export function registerReportingTools(server: McpServer): void {
         // Duration statistics from server
         if (summary) {
           report += `\nDuration Statistics:\n`;
-          report += `  Total: ${formatDuration(summary.sumDurationInSeconds)}\n`;
-          report += `  Average: ${formatDuration(summary.avgDurationInSeconds)}\n`;
-          report += `  Min: ${formatDuration(summary.minDurationInSeconds)}\n`;
-          report += `  Max: ${formatDuration(summary.maxDurationInSeconds)}\n`;
+          report += `  Total: ${formatDuration(summary.sumDuration)}\n`;
+          report += `  Average: ${formatDuration(summary.avgDuration)}\n`;
+          report += `  Min: ${formatDuration(summary.minDuration)}\n`;
+          report += `  Max: ${formatDuration(summary.maxDuration)}\n`;
         }
 
         // Top users from server analytics
@@ -106,9 +106,9 @@ export function registerReportingTools(server: McpServer): void {
         if (topUserList.length > 0) {
           report += `\nTop Users:\n`;
           for (const u of topUserList) {
-            const name = u.userName ?? "Unknown";
-            const count = u.sessionCount ?? 0;
-            const dur = formatDuration(u.totalDurationInSeconds);
+            const name = u.managedAccountName ?? "Unknown";
+            const count = u.countSessions ?? 0;
+            const dur = formatDuration(u.sumDuration);
             report += `  ${name}: ${count} session(s), ${dur} total\n`;
           }
         }
@@ -119,7 +119,7 @@ export function registerReportingTools(server: McpServer): void {
         const byActivity: Record<string, number> = {};
 
         for (const s of sessions) {
-          const statusKey = s.statusDescription ?? s.status ?? "Unknown";
+          const statusKey = s.sessionStatusDescription ?? `Status ${s.sessionStatus}`;
           byStatus[statusKey] = (byStatus[statusKey] || 0) + 1;
 
           const resKey = s.managedResourceName ?? "Unknown";
@@ -143,9 +143,9 @@ export function registerReportingTools(server: McpServer): void {
         report += `\n\nRecent Sessions:\n`;
         for (const s of sessions.slice(0, 15)) {
           const res = s.managedResourceName ?? "Unknown";
-          const user = s.createdByUserName ?? "?";
+          const user = s.createdByDisplayName ?? "?";
           const dur = formatDuration(s.durationInSeconds);
-          const status = s.statusDescription ?? s.status ?? "";
+          const status = s.sessionStatusDescription ?? `Status ${s.sessionStatus}`;
           report += `  • ${s.id.substring(0, 8)}... — ${res} — ${user} — ${dur} — ${status}\n`;
         }
         if (total > 15) {

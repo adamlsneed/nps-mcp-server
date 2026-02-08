@@ -13,10 +13,10 @@ import type { SessionSearchResults, SessionSummaryRecord } from "../types.js";
 
 function formatSessionRow(s: SessionSummaryRecord): string {
   const res = s.managedResourceName ?? "Unknown";
-  const user = s.createdByUserName ?? "?";
+  const user = s.createdByDisplayName ?? "?";
   const activity = s.activityName ?? "?";
   const dur = formatDuration(s.durationInSeconds);
-  const status = s.statusDescription ?? s.status ?? "";
+  const status = s.sessionStatusDescription ?? `Status ${s.sessionStatus}`;
   const date = s.createdDateTimeUtc
     ? s.createdDateTimeUtc.replace("T", " ").substring(0, 19)
     : "";
@@ -99,16 +99,16 @@ export function registerAuditTools(server: McpServer): void {
         if (summary) {
           text += `\nDuration Statistics:\n`;
           text += `  Count: ${summary.countSessions ?? total}\n`;
-          text += `  Total: ${formatDuration(summary.sumDurationInSeconds)}\n`;
-          text += `  Average: ${formatDuration(summary.avgDurationInSeconds)}\n`;
-          text += `  Min: ${formatDuration(summary.minDurationInSeconds)} | Max: ${formatDuration(summary.maxDurationInSeconds)}\n`;
+          text += `  Total: ${formatDuration(summary.sumDuration)}\n`;
+          text += `  Average: ${formatDuration(summary.avgDuration)}\n`;
+          text += `  Min: ${formatDuration(summary.minDuration)} | Max: ${formatDuration(summary.maxDuration)}\n`;
         }
 
         const topUserList = result.topUsers ?? [];
         if (topUserList.length > 0) {
           text += `\nTop Users:\n`;
           for (const u of topUserList) {
-            text += `  ${u.userName ?? "?"}: ${u.sessionCount ?? 0} sessions, ${formatDuration(u.totalDurationInSeconds)} total\n`;
+            text += `  ${u.managedAccountName ?? "?"}: ${u.countSessions ?? 0} sessions, ${formatDuration(u.sumDuration)} total\n`;
           }
         }
 
@@ -284,22 +284,26 @@ export function registerAuditTools(server: McpServer): void {
         interface CredentialSearchResult {
           data: Array<{
             id?: string;
-            name?: string;
+            userName?: string;
             displayName?: string;
             samAccountName?: string;
-            domainName?: string;
-            resourceName?: string;
-            platformName?: string;
+            domain?: string;
+            resource?: string;
+            platform?: string;
+            platformId?: string;
+            managedResourceId?: string;
             age?: number;
-            passwordStatus?: string;
-            rotationType?: string;
+            passwordStatus?: number;
+            rotationType?: number;
             lastPasswordChangeDateTimeUtc?: string;
             nextPasswordChangeDateTimeUtc?: string;
             lastVerifiedDateTimeUtc?: string;
             dependencyCount?: number;
-            privilege?: string;
-            credentialType?: string;
-            managedType?: string;
+            privilege?: number;
+            privilegeName?: string;
+            credentialType?: number;
+            managedType?: number;
+            status?: string;
           }>;
           recordsTotal: number;
         }
@@ -327,14 +331,35 @@ export function registerAuditTools(server: McpServer): void {
           };
         }
 
+        // passwordStatus is a number — map to labels
+        const passwordStatusLabel = (s: number | undefined): string => {
+          switch (s) {
+            case 0: return "Unspecified";
+            case 1: return "Verified";
+            case 2: return "Changed";
+            case 3: return "Failed";
+            case 4: return "Stale";
+            default: return `Status ${s ?? "?"}`;
+          }
+        };
+
+        const rotationTypeLabel = (r: number | undefined): string => {
+          switch (r) {
+            case 0: return "None";
+            case 1: return "Automatic";
+            case 2: return "Manual";
+            default: return `Type ${r ?? "?"}`;
+          }
+        };
+
         // Classify health
         const stale: typeof creds = [];
         const healthy: typeof creds = [];
         const unverified: typeof creds = [];
 
         for (const c of creds) {
-          const status = (c.passwordStatus ?? "").toLowerCase();
-          if (status.includes("stale") || status.includes("expired") || status.includes("fail")) {
+          const ps = c.passwordStatus ?? 0;
+          if (ps === 3 || ps === 4) {
             stale.push(c);
           } else if (!c.lastVerifiedDateTimeUtc) {
             unverified.push(c);
@@ -350,21 +375,21 @@ export function registerAuditTools(server: McpServer): void {
         if (stale.length > 0) {
           text += `\nStale/Failed Credentials:\n`;
           for (const c of stale) {
-            const name = c.displayName || c.samAccountName || c.name || "?";
-            const resource = c.resourceName ?? "";
+            const name = c.displayName || c.samAccountName || c.userName || "?";
+            const location = c.domain || c.platform || "";
             const lastChange = c.lastPasswordChangeDateTimeUtc
               ? c.lastPasswordChangeDateTimeUtc.replace("T", " ").substring(0, 19)
               : "never";
-            text += `  • ${name} (${resource}) — Status: ${c.passwordStatus} — Last changed: ${lastChange}\n`;
+            text += `  • ${name} (${location}) — ${passwordStatusLabel(c.passwordStatus)} — Last changed: ${lastChange}\n`;
           }
         }
 
         if (unverified.length > 0) {
           text += `\nUnverified Credentials:\n`;
           for (const c of unverified.slice(0, 10)) {
-            const name = c.displayName || c.samAccountName || c.name || "?";
-            const resource = c.resourceName ?? "";
-            text += `  • ${name} (${resource}) — Never verified\n`;
+            const name = c.displayName || c.samAccountName || c.userName || "?";
+            const location = c.domain || c.platform || "";
+            text += `  • ${name} (${location}) — Never verified\n`;
           }
           if (unverified.length > 10) {
             text += `  ... and ${unverified.length - 10} more\n`;
@@ -373,15 +398,16 @@ export function registerAuditTools(server: McpServer): void {
 
         text += `\nAll Credentials:\n`;
         for (const c of creds) {
-          const name = c.displayName || c.samAccountName || c.name || "?";
-          const resource = c.resourceName ?? "";
+          const name = c.displayName || c.samAccountName || c.userName || "?";
+          const location = c.domain || c.platform || "";
           const age = c.age != null ? `${c.age}d old` : "?";
-          const status = c.passwordStatus ?? "?";
-          const rotation = c.rotationType ?? "";
+          const status = passwordStatusLabel(c.passwordStatus);
+          const rotation = rotationTypeLabel(c.rotationType);
+          const privilege = c.privilegeName ?? "";
           const lastChange = c.lastPasswordChangeDateTimeUtc
             ? c.lastPasswordChangeDateTimeUtc.replace("T", " ").substring(0, 19)
             : "never";
-          text += `  ${name} | ${resource} | ${age} | ${status} | ${rotation} | Changed: ${lastChange}\n`;
+          text += `  ${name} | ${location} | ${age} | ${status} | ${rotation} | ${privilege} | Changed: ${lastChange}\n`;
         }
 
         if (skip + creds.length < total) {
@@ -415,7 +441,8 @@ export function registerAuditTools(server: McpServer): void {
             name?: string;
             displayName?: string;
             samAccountName?: string;
-            domainName?: string;
+            email?: string;
+            domain?: string;
             entityType?: number;
           }>;
           recordsTotal?: number;
@@ -424,10 +451,11 @@ export function registerAuditTools(server: McpServer): void {
           data?: Array<{
             id?: string;
             name?: string;
-            displayName?: string;
-            ipAddress?: string;
+            dnsHostName?: string;
             platformId?: string;
-            platformName?: string;
+            os?: string;
+            activeSessionCount?: number;
+            entityType?: number;
           }>;
           recordsTotal?: number;
         }
@@ -436,7 +464,7 @@ export function registerAuditTools(server: McpServer): void {
             id?: string;
             name?: string;
             description?: string;
-            activityType?: number;
+            entityType?: number;
           }>;
           recordsTotal?: number;
         }
@@ -466,7 +494,7 @@ export function registerAuditTools(server: McpServer): void {
         } else {
           for (const u of userList) {
             const name = u.displayName || u.samAccountName || u.name || "?";
-            const domain = u.domainName ? `${u.domainName}\\` : "";
+            const domain = u.domain ? `${u.domain}\\` : "";
             const type = u.entityType === 1 ? " [Group]" : "";
             text += `  • ${domain}${name}${type}\n`;
           }
@@ -477,10 +505,10 @@ export function registerAuditTools(server: McpServer): void {
           text += `  (none)\n`;
         } else {
           for (const r of resourceList) {
-            const name = r.displayName || r.name || "?";
-            const ip = r.ipAddress ? ` — ${r.ipAddress}` : "";
-            const platform = r.platformName ?? "";
-            text += `  • ${name}${ip} [${platform}]\n`;
+            const name = r.name || "?";
+            const host = r.dnsHostName ? ` — ${r.dnsHostName}` : "";
+            const os = r.os ?? "";
+            text += `  • ${name}${host}${os ? ` [${os}]` : ""}\n`;
           }
         }
 
@@ -523,49 +551,29 @@ export function registerAuditTools(server: McpServer): void {
     },
     async ({ sessionId, filterText, skip, take, orderDescending }) => {
       try {
+        // ActionQueue returns a flat array with sparse fields
         interface ActionQueueItem {
           id?: string;
           status?: number;
           statusDescription?: string;
-          actionType?: string;
-          actionTypeDescription?: string;
-          startTimeUtc?: string;
-          endTimeUtc?: string;
-          activitySessionId?: string;
-          managedResourceName?: string;
-          managedAccountName?: string;
-          errorMessage?: string;
-          queuePosition?: number;
-        }
-        interface ActionQueueResult {
-          data?: ActionQueueItem[];
-          recordsTotal?: number;
+          actionQueueActionStatus?: number;
+          startTime?: string;
+          [key: string]: unknown;
         }
 
-        const params: Record<string, string | number | boolean | undefined> = {
-          skip,
-          take,
-          orderDescending,
-        };
+        const params: Record<string, string | number | boolean | undefined> = {};
         if (sessionId) params.activitySessionId = sessionId;
         if (filterText) params.filterText = filterText;
 
-        // Try search-style response first, fall back to array
-        const raw = await npsApi<ActionQueueResult | ActionQueueItem[]>(
+        // Returns a flat array — we do client-side pagination
+        const raw = await npsApi<ActionQueueItem[]>(
           "/api/v1/ActionQueue",
           { params }
         );
 
-        let items: ActionQueueItem[];
-        let total: number;
-
-        if (Array.isArray(raw)) {
-          items = raw.slice(skip, skip + take);
-          total = raw.length;
-        } else {
-          items = raw.data ?? [];
-          total = raw.recordsTotal ?? items.length;
-        }
+        const allItems = Array.isArray(raw) ? raw : [];
+        const total = allItems.length;
+        const items = allItems.slice(skip, skip + take);
 
         if (items.length === 0) {
           return {
@@ -573,28 +581,29 @@ export function registerAuditTools(server: McpServer): void {
           };
         }
 
+        // Status codes for action queue
+        const aqStatusLabel = (s: number | undefined): string => {
+          switch (s) {
+            case 0: return "Pending";
+            case 1: return "Running";
+            case 2: return "Completed";
+            case 3: return "Failed";
+            case 4: return "Cancelled";
+            default: return `Status ${s ?? "?"}`;
+          }
+        };
+
         let text = `Action Queue — ${total} total items\n`;
         text += `Showing ${skip + 1}–${skip + items.length} of ${total}\n\n`;
 
         for (const a of items) {
           const id = a.id ? a.id.substring(0, 8) + "..." : "?";
-          const status = a.statusDescription ?? `Status ${a.status}`;
-          const type = a.actionTypeDescription ?? a.actionType ?? "?";
-          const resource = a.managedResourceName ?? "";
-          const account = a.managedAccountName ?? "";
-          const start = a.startTimeUtc
-            ? a.startTimeUtc.replace("T", " ").substring(0, 19)
-            : "";
-          const end = a.endTimeUtc
-            ? a.endTimeUtc.replace("T", " ").substring(0, 19)
-            : "";
-          const session = a.activitySessionId
-            ? `Session: ${a.activitySessionId.substring(0, 8)}...`
+          const status = a.statusDescription ?? aqStatusLabel(a.status);
+          const start = a.startTime
+            ? a.startTime.replace("T", " ").substring(0, 19)
             : "";
 
-          text += `  ${id} | ${start} → ${end} | ${type} | ${resource} ${account} | ${status}`;
-          if (session) text += ` | ${session}`;
-          if (a.errorMessage) text += ` | ERROR: ${a.errorMessage}`;
+          text += `  ${id} | ${start} | ${status}`;
           text += "\n";
         }
 

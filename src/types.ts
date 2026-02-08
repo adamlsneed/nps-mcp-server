@@ -121,12 +121,20 @@ export interface ActionLogCollection {
 
 /**
  * A session record from GET /api/v1/ActivitySession/Search
+ *
+ * Key field names (verified against live API):
+ *   sessionStatus / sessionStatusDescription — the session lifecycle status
+ *   status — internal queue status (NOT the session status)
+ *   createdByDisplayName — who created the session (not createdByUserName)
+ *   startDateTimeUtc / endDateTimeUtc — scheduled times
+ *   actualStartDateTimeUtc / actualEndDateTimeUtc — real times
  */
 export interface SessionSummaryRecord {
   id: string;
-  status?: string;
-  statusDescription?: string;
-  createdByUserName?: string;
+  sessionStatus?: number;
+  sessionStatusDescription?: string;
+  status?: number;
+  createdByDisplayName?: string;
   createdDateTimeUtc?: string;
   loginAccountName?: string;
   activityName?: string;
@@ -137,28 +145,34 @@ export interface SessionSummaryRecord {
   sessionExtensionCount?: number;
   actualStartDateTimeUtc?: string;
   actualEndDateTimeUtc?: string;
-  scheduledStartDateTimeUtc?: string;
-  scheduledEndDateTimeUtc?: string;
+  startDateTimeUtc?: string;
+  endDateTimeUtc?: string;
   note?: string;
   ticket?: string;
 }
 
 /**
  * Response from GET /api/v1/ActivitySession/Search
+ *
+ * topUsers field names: managedAccountName, countSessions, sumDuration, avgDuration
+ * summary field names: countSessions, sumDuration, avgDuration, minDuration, maxDuration
  */
 export interface SessionSearchResults {
   data: SessionSummaryRecord[];
   recordsTotal: number;
   topUsers?: Array<{
-    userName?: string;
-    sessionCount?: number;
-    totalDurationInSeconds?: number;
+    managedAccountName?: string;
+    countSessions?: number;
+    sumDuration?: number;
+    avgDuration?: number;
+    minDuration?: number;
+    maxDuration?: number;
   }>;
   summary?: {
     countSessions?: number;
-    sumDurationInSeconds?: number;
-    avgDurationInSeconds?: number;
-    minDurationInSeconds?: number;
-    maxDurationInSeconds?: number;
+    sumDuration?: number;
+    avgDuration?: number;
+    minDuration?: number;
+    maxDuration?: number;
   };
 }
