@@ -63,7 +63,6 @@ export function registerPolicyTools(server: McpServer): void {
     },
     async ({ search }) => {
       try {
-        // TODO: Verify exact endpoint path from API docs
         const policies = await npsApi<NpsAccessPolicy[]>(
           "/api/v1/AccessControlPolicy"
         );

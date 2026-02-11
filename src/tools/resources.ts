@@ -33,6 +33,7 @@ function formatResource(r: NpsManagedResource): string {
   const platform = r.platform?.name || platformName(r.platformId || null);
   const display = r.displayName || r.name;
   const ip = r.ipAddress || r.host?.ipAddress || "";
+  const dns = r.dnsHostName || r.hostName || "";
   const ports = [];
   if (r.portRdp) ports.push(`RDP:${r.portRdp}`);
   if (r.portSsh) ports.push(`SSH:${r.portSsh}`);
@@ -40,6 +41,7 @@ function formatResource(r: NpsManagedResource): string {
 
   let line = `• ${display} [${platform}]`;
   if (ip) line += ` — ${ip}`;
+  if (dns && dns !== ip && dns.toLowerCase() !== display.toLowerCase()) line += ` (${dns})`;
   if (ports.length) line += ` (${ports.join(", ")})`;
   line += `\n  ID: ${r.id}`;
   return line;
@@ -60,8 +62,6 @@ export function registerResourceTools(server: McpServer): void {
     },
     async ({ search }) => {
       try {
-        // TODO: Confirm the exact endpoint path from API docs
-        // Common patterns: /api/v1/ManagedResource or /api/v1/ManagedResource/Search
         const resources = await npsApi<NpsManagedResource[]>(
           "/api/v1/ManagedResource"
         );
