@@ -5,7 +5,7 @@
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { npsApi, formatToolError } from "../client.js";
-import { platformName } from "../types.js";
+import { platformName, isRdpPlatform } from "../types.js";
 
 // NPS ManagedResource response shape (subset of fields we care about)
 interface NpsManagedResource {
@@ -100,6 +100,143 @@ export function registerResourceTools(server: McpServer): void {
         return {
           content: [{ type: "text", text: `${header}\n\n${formatted}` }],
         };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: formatToolError(error) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  /**
+   * nps_resource_access — What activities can be used on a resource?
+   */
+  server.tool(
+    "nps_resource_access",
+    "Find what activities are available for a resource. Searches policies that include the resource and returns the bound activities. Use this before nps_create_session to find valid activity names for a resource.",
+    {
+      resourceName: z
+        .string()
+        .describe("Resource name, DNS hostname, or partial match (e.g., 'fs1', 'FS1.adamsneed.com')"),
+    },
+    async ({ resourceName }) => {
+      try {
+        // Step 1: Resolve resource name to ID
+        const resources = await npsApi<NpsManagedResource[]>("/api/v1/ManagedResource");
+        const term = resourceName.toLowerCase();
+        const resource = resources.find(
+          (r) =>
+            r.name?.toLowerCase() === term ||
+            r.displayName?.toLowerCase() === term ||
+            r.dnsHostName?.toLowerCase() === term ||
+            r.name?.toLowerCase().includes(term) ||
+            r.dnsHostName?.toLowerCase().includes(term)
+        );
+
+        if (!resource) {
+          return {
+            content: [{ type: "text", text: `Resource "${resourceName}" not found. Use nps_list_resources to see available resources.` }],
+            isError: true,
+          };
+        }
+
+        const display = resource.displayName || resource.name;
+        const platform = resource.platform?.name || platformName(resource.platformId);
+        const connType = isRdpPlatform(resource.platformId) ? "RDP" : "SSH";
+
+        // Step 2: Get all policies
+        interface NpsPolicy {
+          id: string;
+          name: string;
+          isDisabled?: boolean;
+          policyType?: number;
+        }
+        const policies = await npsApi<NpsPolicy[]>("/api/v1/AccessControlPolicy");
+        const activePolicies = policies.filter((p) => !p.isDisabled && p.policyType === 0);
+
+        // Step 3: For each policy, check if it includes this resource
+        interface PolicyResources {
+          data?: Array<{ id?: string; name?: string }>;
+          recordsTotal?: number;
+        }
+        interface PolicyActivities {
+          data?: Array<{ id?: string; name?: string; description?: string }>;
+          recordsTotal?: number;
+        }
+
+        const matchingPolicies: Array<{
+          policyName: string;
+          activities: Array<{ name: string; description?: string }>;
+        }> = [];
+
+        // Check policies in parallel (batch of 5)
+        for (let i = 0; i < activePolicies.length; i += 5) {
+          const batch = activePolicies.slice(i, i + 5);
+          const results = await Promise.all(
+            batch.map(async (policy) => {
+              const res = await npsApi<PolicyResources>(
+                `/api/v1/AccessControlPolicy/SearchResources/${policy.id}`
+              );
+              const hasResource = res.data?.some(
+                (r) => r.id === resource.id
+              );
+              if (!hasResource) return null;
+
+              const acts = await npsApi<PolicyActivities>(
+                `/api/v1/AccessControlPolicy/SearchActivities/${policy.id}`
+              );
+              return {
+                policyName: policy.name,
+                activities: (acts.data ?? []).map((a) => ({
+                  name: a.name ?? "Unknown",
+                  description: a.description,
+                })),
+              };
+            })
+          );
+          for (const r of results) {
+            if (r) matchingPolicies.push(r);
+          }
+        }
+
+        let text = `Access for ${display} [${platform}] (${connType})\n\n`;
+
+        if (matchingPolicies.length === 0) {
+          text += "No policies grant access to this resource for the current user.\n";
+          text += "Ask an NPS administrator to add it to a policy.";
+          return { content: [{ type: "text", text }] };
+        }
+
+        // Deduplicate activities across policies
+        const allActivities = new Map<string, { name: string; description?: string; policies: string[] }>();
+        for (const mp of matchingPolicies) {
+          for (const act of mp.activities) {
+            const existing = allActivities.get(act.name);
+            if (existing) {
+              existing.policies.push(mp.policyName);
+            } else {
+              allActivities.set(act.name, {
+                name: act.name,
+                description: act.description,
+                policies: [mp.policyName],
+              });
+            }
+          }
+        }
+
+        text += `${allActivities.size} available activity/activities:\n\n`;
+        for (const [, act] of allActivities) {
+          text += `• ${act.name}`;
+          if (act.description) text += `\n  ${act.description}`;
+          text += `\n  Policy: ${act.policies.join(", ")}\n`;
+        }
+
+        text += `\nTo create a session:\n`;
+        const firstAct = allActivities.values().next().value;
+        text += `  nps_create_session(resourceName: "${resource.dnsHostName || display}", activityName: "${firstAct?.name}")`;
+
+        return { content: [{ type: "text", text }] };
       } catch (error) {
         return {
           content: [{ type: "text", text: formatToolError(error) }],
