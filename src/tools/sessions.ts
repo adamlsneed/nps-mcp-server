@@ -161,7 +161,7 @@ export function registerSessionTools(server: McpServer): void {
    */
   server.tool(
     "nps_create_session",
-    "Create a new activity session in NPS. This grants temporary, just-in-time privileged access to a resource. You need the resource name and activity name — use nps_list_resources and nps_list_policies to find these.",
+    "Create a new activity session in NPS. This grants temporary, just-in-time privileged access to a resource. You need the resource name (DNS hostname) and activity name. Use nps_resource_access to find valid activities for a resource.",
     {
       resourceName: z
         .string()
@@ -292,7 +292,7 @@ export function registerSessionTools(server: McpServer): void {
             content: [
               {
                 type: "text",
-                text: `Session is not running (status: ${session.statusDescription}). Cannot retrieve connection details.`,
+                text: `Session is not running (status: ${session.statusDescription || sessionStatusLabel(session.status)}). Cannot retrieve connection details.`,
               },
             ],
           };
