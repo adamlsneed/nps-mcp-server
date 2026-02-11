@@ -56,12 +56,12 @@ export function hasAdminRoleClaim(token: string): boolean {
   if (!payload) return false;
   const roleClaim = payload["http://schemas.microsoft.com/ws/2008/06/identity/claims/role"];
   if (!roleClaim) return false;
+  const isAdmin = (r: unknown): boolean =>
+    typeof r === "string" && (r.toLowerCase() === "administrator" || r.toLowerCase() === "admin");
   if (Array.isArray(roleClaim)) {
-    return roleClaim.some(
-      (r) => typeof r === "string" && r.toLowerCase() === "administrator"
-    );
+    return roleClaim.some(isAdmin);
   }
-  return typeof roleClaim === "string" && roleClaim.toLowerCase() === "administrator";
+  return isAdmin(roleClaim);
 }
 
 /**
