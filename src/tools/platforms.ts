@@ -28,6 +28,23 @@ interface NpsActivity {
   platform?: { name?: string };
 }
 
+interface NpsMfaConnector {
+  id: string;
+  name: string;
+  description?: string;
+  enabled?: boolean;
+  isDefault?: boolean;
+  isExclusive?: boolean;
+  connectorType?: string;
+  radiusOptionsId?: string;
+  openIdOptionsId?: string;
+  samlOptionsId?: string;
+  useRemoteAccessGateway?: boolean;
+  nodeId?: string;
+  createdDateTimeUtc?: string;
+  modifiedDateTimeUtc?: string;
+}
+
 interface NpsConnectorConfig {
   id?: string;
   name: string;
@@ -198,6 +215,78 @@ export function registerPlatformTools(server: McpServer): void {
           if (val) text += ` = ${val}`;
           if (c.required) text += ` [required]`;
           if (c.description) text += `\n  ${c.description}`;
+          text += `\n`;
+        }
+
+        return { content: [{ type: "text", text }] };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: formatToolError(error) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  /**
+   * nps_authentication_connectors — List MFA/SAML/OIDC connectors
+   */
+  server.tool(
+    "nps_authentication_connectors",
+    "List authentication connectors configured in NPS (MFA, SAML, OpenID Connect, etc.). Shows connector type, enabled/default/exclusive flags, and linked configuration IDs. Answers 'what auth methods are available?'",
+    {
+      search: z
+        .string()
+        .optional()
+        .describe("Filter by connector name or type (partial match)"),
+    },
+    async ({ search }) => {
+      try {
+        const connectors = await npsApi<NpsMfaConnector[]>(
+          "/api/v1/MfaConnector"
+        );
+
+        let filtered = connectors;
+        if (search) {
+          const term = search.toLowerCase();
+          filtered = connectors.filter(
+            (c) =>
+              c.name?.toLowerCase().includes(term) ||
+              c.connectorType?.toLowerCase().includes(term) ||
+              c.description?.toLowerCase().includes(term)
+          );
+        }
+
+        if (filtered.length === 0) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: search
+                  ? `No connectors matching "${search}". There are ${connectors.length} total.`
+                  : "No authentication connectors found.",
+              },
+            ],
+          };
+        }
+
+        let text = `${filtered.length} authentication connector(s)`;
+        if (search) text += ` matching "${search}"`;
+        text += ` (${connectors.length} total):\n\n`;
+
+        for (const c of filtered) {
+          text += `• ${c.name} [${c.connectorType ?? "Unknown"}]`;
+          const flags: string[] = [];
+          if (c.enabled) flags.push("Enabled");
+          if (c.isDefault) flags.push("Default");
+          if (c.isExclusive) flags.push("Exclusive");
+          if (flags.length > 0) text += ` — ${flags.join(", ")}`;
+          text += `\n  ID: ${c.id}`;
+          if (c.description) text += `\n  ${c.description}`;
+          if (c.radiusOptionsId) text += `\n  RADIUS Config: ${c.radiusOptionsId}`;
+          if (c.openIdOptionsId) text += `\n  OpenID Config: ${c.openIdOptionsId}`;
+          if (c.samlOptionsId) text += `\n  SAML Config: ${c.samlOptionsId}`;
+          if (c.useRemoteAccessGateway) text += `\n  Uses Remote Access Gateway`;
           text += `\n`;
         }
 

@@ -1,14 +1,16 @@
 /**
  * NPS Authentication Module
  *
- * Handles the two-step auth flow:
- *   1. POST /signinBody → initial bearer token
- *   2. POST /signin2fa → final bearer token (MFA code required)
+ * Supports two auth flows:
+ *
+ * Interactive User (default):
+ *   1. POST /signinBody with username/password → initial bearer token
+ *   2. POST /signin2fa with MFA code → final bearer token
+ *
+ * Application User (headless/automated):
+ *   1. POST /signinBody with username + API key as password → bearer token (no 2FA)
  *
  * Also handles token refresh via GET /api/v1/UserToken
- *
- * For Application Users (headless/scheduled), the flow differs:
- *   - API key exchange for bearer token (TBD - not yet fully documented upstream)
  */
 
 import { NpsConfig } from "./config.js";
@@ -160,11 +162,46 @@ async function refreshToken(
 }
 
 /**
- * Full authentication flow: signinBody → signin2fa
+ * Application User auth: POST /signinBody with API key as password.
+ * Returns a bearer token directly — no 2FA step required.
+ */
+async function authenticateWithApiKey(config: NpsConfig): Promise<string> {
+  const url = `${config.baseUrl}/signinBody`;
+  const body = JSON.stringify({
+    Login: config.username,
+    Password: config.apiKey,
+  });
+
+  const response = await npsRequestWithRetry(url, {
+    method: "POST",
+    body,
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(
+      `NPS API key auth failed (${response.status}): ${text}`
+    );
+  }
+
+  const token = await response.text();
+  return token.replace(/^"|"$/g, "");
+}
+
+/**
+ * Full authentication flow.
+ * If API key is configured, uses single-step auth (no MFA).
+ * Otherwise, uses interactive flow: signinBody → signin2fa.
  */
 export async function authenticate(config: NpsConfig): Promise<string> {
-  const initialToken = await signinBody(config);
-  const finalToken = await signin2fa(config, initialToken);
+  let finalToken: string;
+
+  if (config.apiKey) {
+    finalToken = await authenticateWithApiKey(config);
+  } else {
+    const initialToken = await signinBody(config);
+    finalToken = await signin2fa(config, initialToken);
+  }
 
   tokenState = {
     token: finalToken,

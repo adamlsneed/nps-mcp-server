@@ -254,6 +254,113 @@ export function registerAuditTools(server: McpServer): void {
   );
 
   /**
+   * nps_historical_sessions — Full historical query with rich filtering
+   */
+  server.tool(
+    "nps_historical_sessions",
+    "Query historical sessions with rich filtering: date ranges, resource/user array filters, user type (User/Application/Local), text search, and pagination. More powerful than nps_session_report for compliance reporting.",
+    {
+      startDate: z
+        .string()
+        .optional()
+        .describe("Start date (ISO 8601, e.g., '2025-01-01'). Default: 30 days ago"),
+      endDate: z
+        .string()
+        .optional()
+        .describe("End date (ISO 8601). Default: now"),
+      resourceNames: z
+        .array(z.string())
+        .optional()
+        .describe("Filter by resource names (exact match array)"),
+      userNames: z
+        .array(z.string())
+        .optional()
+        .describe("Filter by user names (exact match array)"),
+      filterUserType: z
+        .enum(["User", "Application", "Local"])
+        .optional()
+        .describe("Filter by user type"),
+      filterText: z
+        .string()
+        .optional()
+        .describe("Free-text search across all fields"),
+      skip: z.number().optional().default(0).describe("Skip N results for pagination"),
+      take: z.number().optional().default(25).describe("Number of results (default: 25)"),
+    },
+    async ({ startDate, endDate, resourceNames, userNames, filterUserType, filterText, skip, take }) => {
+      try {
+        const now = new Date();
+        const defaultStart = new Date();
+        defaultStart.setDate(defaultStart.getDate() - 30);
+
+        const params: Record<string, string | number | boolean | undefined> = {
+          startDate: startDate ?? defaultStart.toISOString(),
+          endDate: endDate ?? now.toISOString(),
+          skip,
+          take,
+        };
+        if (filterText) params.filterText = filterText;
+        if (filterUserType) params.filterUserType = filterUserType;
+
+        // Resource and user name arrays: pass first value via params
+        // (NPS API accepts single resourceName/userName query params)
+        if (resourceNames && resourceNames.length > 0) {
+          params.resourceName = resourceNames[0];
+        }
+        if (userNames && userNames.length > 0) {
+          params.userName = userNames[0];
+        }
+
+        const result = await npsApi<SessionSearchResults>(
+          "/api/v1/ActivitySession/SummaryByStatus/Historical",
+          { params }
+        );
+
+        const sessions = result.data ?? [];
+        const total = result.recordsTotal ?? sessions.length;
+
+        if (total === 0) {
+          return {
+            content: [{ type: "text", text: "No historical sessions found matching your filters." }],
+          };
+        }
+
+        let text = `Historical Sessions — ${total} total\n`;
+        text += `Showing ${skip + 1}–${skip + sessions.length} of ${total}\n`;
+        text += `Period: ${params.startDate} → ${params.endDate}\n`;
+        if (filterUserType) text += `User type: ${filterUserType}\n`;
+        if (filterText) text += `Search: "${filterText}"\n`;
+
+        // Summary stats if available
+        const summary = result.summary;
+        if (summary) {
+          text += `\nDuration Statistics:\n`;
+          text += `  Total: ${formatDuration(summary.sumDuration)}\n`;
+          text += `  Average: ${formatDuration(summary.avgDuration)}\n`;
+          text += `  Min: ${formatDuration(summary.minDuration)} | Max: ${formatDuration(summary.maxDuration)}\n`;
+        }
+
+        text += `\nSessions:\n`;
+        text += `  ID       | Date                | Resource | User | Activity | Duration | Status\n`;
+        for (const s of sessions) {
+          text += formatSessionRow(s) + "\n";
+        }
+
+        if (skip + sessions.length < total) {
+          text += `\n... ${total - skip - sessions.length} more. Use skip=${skip + take} to see next page.`;
+        }
+
+        return { content: [{ type: "text", text }] };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: formatToolError(error) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  /**
    * nps_credential_health — Credential rotation and compliance status
    */
   server.tool(

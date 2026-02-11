@@ -163,6 +163,73 @@ export function registerReportingTools(server: McpServer): void {
   );
 
   /**
+   * nps_session_dashboard — Quick session count overview
+   */
+  server.tool(
+    "nps_session_dashboard",
+    "Quick session activity dashboard. Shows all-time totals, 7-day and 24-hour activity with duration stats, and currently active session count. Uses lightweight Search queries with take=0 for minimal overhead.",
+    {},
+    async () => {
+      try {
+        const now = new Date();
+        const sevenDaysAgo = new Date();
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+        const oneDayAgo = new Date();
+        oneDayAgo.setDate(oneDayAgo.getDate() - 1);
+
+        // Parallel queries: all-time total, last 7 days, last 24 hours
+        const [allTime, last7d, last24h] = await Promise.all([
+          npsApi<SessionSearchResults>("/api/v1/ActivitySession/Search", {
+            params: { take: 0 },
+          }),
+          npsApi<SessionSearchResults>("/api/v1/ActivitySession/Search", {
+            params: {
+              filterDateTimeMin: sevenDaysAgo.toISOString(),
+              filterDateTimeMax: now.toISOString(),
+              take: 0,
+            },
+          }),
+          npsApi<SessionSearchResults>("/api/v1/ActivitySession/Search", {
+            params: {
+              filterDateTimeMin: oneDayAgo.toISOString(),
+              filterDateTimeMax: now.toISOString(),
+              take: 0,
+            },
+          }),
+        ]);
+
+        let text = `Session Dashboard\n\n`;
+        text += `All-Time: ${allTime.recordsTotal ?? "?"} sessions`;
+        if (allTime.summary) {
+          text += `, ${formatDuration(allTime.summary.sumDuration)} total duration`;
+        }
+        text += `\n`;
+
+        text += `Last 7 Days: ${last7d.recordsTotal ?? 0} sessions`;
+        if (last7d.summary) {
+          text += ` (avg ${formatDuration(last7d.summary.avgDuration)}, total ${formatDuration(last7d.summary.sumDuration)})`;
+        }
+        text += `\n`;
+
+        text += `Last 24 Hours: ${last24h.recordsTotal ?? 0} sessions`;
+        if (last24h.summary) {
+          text += ` (avg ${formatDuration(last24h.summary.avgDuration)})`;
+        }
+        text += `\n`;
+
+        text += `\nUse nps_list_sessions for active session details.`;
+
+        return { content: [{ type: "text", text }] };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: formatToolError(error) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  /**
    * nps_access_report — Who has access to what
    */
   server.tool(
@@ -412,6 +479,162 @@ export function registerReportingTools(server: McpServer): void {
             for (const p of noResources) {
               report += `    • ${p.name}\n`;
             }
+          }
+        }
+
+        return { content: [{ type: "text", text: report }] };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: formatToolError(error) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  /**
+   * nps_credential_rotation_report — Rotation compliance executive summary
+   */
+  server.tool(
+    "nps_credential_rotation_report",
+    "Credential rotation compliance report. Aggregates rotation health across all credentials: % managed, % auto-rotating, average age, overdue rotations. Groups by domain and platform for executive summary.",
+    {
+      take: z
+        .number()
+        .optional()
+        .default(500)
+        .describe("Max credentials to analyze (default: 500)"),
+    },
+    async ({ take }) => {
+      try {
+        interface CredSearchRecord {
+          id?: string;
+          userName?: string;
+          displayName?: string;
+          samAccountName?: string;
+          domain?: string;
+          platform?: string;
+          age?: number;
+          passwordStatus?: number;
+          rotationType?: number;
+          lastPasswordChangeDateTimeUtc?: string;
+          nextPasswordChangeDateTimeUtc?: string;
+          lastVerifiedDateTimeUtc?: string;
+          managedType?: number;
+        }
+        interface CredSearchResult {
+          data: CredSearchRecord[];
+          recordsTotal: number;
+        }
+
+        const result = await npsApi<CredSearchResult>(
+          "/api/v1/Credential/Search",
+          { params: { skip: 0, take } }
+        );
+
+        const creds = result.data ?? [];
+        const total = result.recordsTotal ?? creds.length;
+
+        if (creds.length === 0) {
+          return {
+            content: [{ type: "text", text: "No credentials found." }],
+          };
+        }
+
+        // Classify
+        let managed = 0;
+        let autoRotating = 0;
+        let verified = 0;
+        let staleOrFailed = 0;
+        let totalAge = 0;
+        let ageCount = 0;
+        const overdue: CredSearchRecord[] = [];
+        const byDomain: Record<string, { total: number; managed: number; stale: number }> = {};
+        const byPlatform: Record<string, { total: number; managed: number; stale: number }> = {};
+
+        const now = Date.now();
+
+        for (const c of creds) {
+          // Managed if managedType > 0 or rotationType > 0
+          const isManaged = (c.managedType ?? 0) > 0 || (c.rotationType ?? 0) > 0;
+          if (isManaged) managed++;
+          if (c.rotationType === 1) autoRotating++;
+          if (c.passwordStatus === 1 || c.passwordStatus === 2) verified++;
+          if (c.passwordStatus === 3 || c.passwordStatus === 4) staleOrFailed++;
+
+          if (c.age != null && c.age >= 0) {
+            totalAge += c.age;
+            ageCount++;
+          }
+
+          // Check overdue: nextPasswordChange in the past
+          if (c.nextPasswordChangeDateTimeUtc) {
+            const nextChange = new Date(c.nextPasswordChangeDateTimeUtc).getTime();
+            if (nextChange < now) {
+              overdue.push(c);
+            }
+          }
+
+          // Group by domain
+          const domain = c.domain || "Local";
+          if (!byDomain[domain]) byDomain[domain] = { total: 0, managed: 0, stale: 0 };
+          byDomain[domain].total++;
+          if (isManaged) byDomain[domain].managed++;
+          if (c.passwordStatus === 3 || c.passwordStatus === 4) byDomain[domain].stale++;
+
+          // Group by platform
+          const platform = c.platform || "Unknown";
+          if (!byPlatform[platform]) byPlatform[platform] = { total: 0, managed: 0, stale: 0 };
+          byPlatform[platform].total++;
+          if (isManaged) byPlatform[platform].managed++;
+          if (c.passwordStatus === 3 || c.passwordStatus === 4) byPlatform[platform].stale++;
+        }
+
+        const pct = (n: number, d: number) => d > 0 ? `${((n / d) * 100).toFixed(1)}%` : "N/A";
+        const avgAge = ageCount > 0 ? (totalAge / ageCount).toFixed(1) : "N/A";
+
+        let report = `Credential Rotation Compliance Report\n`;
+        report += `Analyzed: ${creds.length} of ${total} total credentials\n\n`;
+
+        report += `Summary:\n`;
+        report += `  Managed: ${managed} (${pct(managed, creds.length)})\n`;
+        report += `  Auto-Rotating: ${autoRotating} (${pct(autoRotating, creds.length)})\n`;
+        report += `  Verified/Changed: ${verified} (${pct(verified, creds.length)})\n`;
+        report += `  Stale/Failed: ${staleOrFailed} (${pct(staleOrFailed, creds.length)})\n`;
+        report += `  Average Age: ${avgAge} days\n`;
+        report += `  Overdue Rotations: ${overdue.length}\n`;
+
+        // By Domain
+        const sortedDomains = Object.entries(byDomain).sort((a, b) => b[1].total - a[1].total);
+        report += `\nBy Domain:\n`;
+        for (const [domain, stats] of sortedDomains) {
+          report += `  ${domain}: ${stats.total} total, ${stats.managed} managed (${pct(stats.managed, stats.total)})`;
+          if (stats.stale > 0) report += `, ${stats.stale} stale`;
+          report += `\n`;
+        }
+
+        // By Platform
+        const sortedPlatforms = Object.entries(byPlatform).sort((a, b) => b[1].total - a[1].total);
+        report += `\nBy Platform:\n`;
+        for (const [platform, stats] of sortedPlatforms) {
+          report += `  ${platform}: ${stats.total} total, ${stats.managed} managed (${pct(stats.managed, stats.total)})`;
+          if (stats.stale > 0) report += `, ${stats.stale} stale`;
+          report += `\n`;
+        }
+
+        // Overdue details
+        if (overdue.length > 0) {
+          report += `\nOverdue Rotations (${overdue.length}):\n`;
+          for (const c of overdue.slice(0, 15)) {
+            const name = c.displayName || c.samAccountName || c.userName || "?";
+            const domain = c.domain || "";
+            const due = c.nextPasswordChangeDateTimeUtc
+              ? c.nextPasswordChangeDateTimeUtc.replace("T", " ").substring(0, 19)
+              : "?";
+            report += `  • ${domain ? `${domain}\\` : ""}${name} — due: ${due}\n`;
+          }
+          if (overdue.length > 15) {
+            report += `  ... and ${overdue.length - 15} more\n`;
           }
         }
 

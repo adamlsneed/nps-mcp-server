@@ -4,13 +4,18 @@
  * Configuration is loaded from environment variables.
  * For Claude Code / local dev, these can be set in .env or shell.
  *
- * Required:
+ * Interactive User Auth (default):
  *   NPS_URL        - Base URL of the NPS server (e.g., https://192.168.86.51:6500)
  *   NPS_USERNAME   - Login username (e.g., domain\user or admin)
  *   NPS_PASSWORD   - Login password
+ *   NPS_MFA_CODE   - MFA code (default: 000000 for lab/dev)
+ *
+ * Application User Auth (headless/automated — bypasses MFA):
+ *   NPS_URL        - Base URL of the NPS server
+ *   NPS_USERNAME   - Application user login name
+ *   NPS_API_KEY    - API key from the Application User's Authentication tab
  *
  * Optional:
- *   NPS_MFA_CODE   - MFA code (default: 000000 for lab/dev)
  *   NPS_TLS_REJECT - Set to "true" to enforce TLS cert validation (default: false)
  */
 
@@ -23,6 +28,7 @@ export interface NpsConfig {
   username: string;
   password: string;
   mfaCode?: string;
+  apiKey?: string;
   tlsRejectUnauthorized: boolean;
 }
 
@@ -56,14 +62,34 @@ export function loadConfig(): NpsConfig {
   const baseUrl = process.env.NPS_URL;
   const username = process.env.NPS_USERNAME;
   const password = process.env.NPS_PASSWORD;
+  const apiKey = process.env.NPS_API_KEY;
 
-  if (!baseUrl || !username || !password) {
+  if (!baseUrl) {
     throw new Error(
-      "Missing required environment variables: NPS_URL, NPS_USERNAME, NPS_PASSWORD\n" +
+      "Missing required environment variable: NPS_URL\n" +
         "Example:\n" +
-        '  NPS_URL="https://192.168.86.51:6500"\n' +
-        '  NPS_USERNAME="admin"\n' +
-        '  NPS_PASSWORD="Temp123!"'
+        '  NPS_URL="https://192.168.86.51:6500"'
+    );
+  }
+
+  if (!username) {
+    throw new Error(
+      "Missing required environment variable: NPS_USERNAME\n" +
+        "Example:\n" +
+        '  NPS_USERNAME="admin"'
+    );
+  }
+
+  // Either API key or password is required
+  if (!apiKey && !password) {
+    throw new Error(
+      "Missing authentication credentials. Provide either:\n" +
+        "  Interactive User: NPS_PASSWORD (+ optional NPS_MFA_CODE)\n" +
+        "  Application User: NPS_API_KEY (bypasses MFA)\n" +
+        "Example:\n" +
+        '  NPS_PASSWORD="Temp123!"\n' +
+        "  — or —\n" +
+        '  NPS_API_KEY="your-api-key-here"'
     );
   }
 
@@ -77,8 +103,9 @@ export function loadConfig(): NpsConfig {
   return {
     baseUrl: baseUrl.replace(/\/+$/, ""), // strip trailing slash
     username,
-    password,
+    password: password ?? "",
     mfaCode: process.env.NPS_MFA_CODE || "000000",
+    apiKey,
     tlsRejectUnauthorized: tlsReject,
   };
 }

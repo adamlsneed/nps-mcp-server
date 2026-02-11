@@ -6,6 +6,9 @@
  */
 
 import { z } from "zod";
+import { writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { npsApi, formatToolError } from "../client.js";
 import { isRdpPlatform, platformName, sessionStatusLabel } from "../types.js";
@@ -72,49 +75,74 @@ export function registerSessionTools(server: McpServer): void {
    */
   server.tool(
     "nps_list_sessions",
-    "List activity sessions in NPS. Shows active, pending, and recent sessions with their status, resource, and activity.",
+    "List activity sessions in NPS. By default shows only Running sessions. Use 'running_and_pending' to include recently created sessions (last hour), or 'all' for everything (can be large).",
     {
       status: z
-        .enum(["active", "all"])
+        .enum(["running", "running_and_pending", "all"])
         .optional()
-        .default("active")
-        .describe("Filter: 'active' for running sessions, 'all' for all recent"),
+        .default("running")
+        .describe("Filter: 'running' (default), 'running_and_pending' (includes Created in last hour), 'all' (everything)"),
     },
     async ({ status }) => {
       try {
-        // TODO: Verify exact endpoint — may be /api/v1/ActivitySession with query params
         const sessions = await npsApi<NpsActivitySession[]>(
           "/api/v1/ActivitySession"
         );
 
-        let filtered = sessions;
-        if (status === "active") {
-          filtered = sessions.filter((s) => s.status <= 1);
+        const oneHourAgo = Date.now() - 60 * 60 * 1000;
+        let filtered: NpsActivitySession[];
+
+        if (status === "all") {
+          filtered = sessions;
+        } else if (status === "running_and_pending") {
+          filtered = sessions.filter((s) => {
+            if (s.status === 1) return true; // Running
+            if (s.status === 0) {
+              // Only include Created sessions from the last hour
+              const created = s.createdDateTimeUtc ? new Date(s.createdDateTimeUtc).getTime() : 0;
+              return created > oneHourAgo;
+            }
+            return false;
+          });
+        } else {
+          // Default: running only
+          filtered = sessions.filter((s) => s.status === 1);
         }
 
         if (filtered.length === 0) {
-          return {
-            content: [
-              {
-                type: "text",
-                text:
-                  status === "active"
-                    ? "No active sessions. Use nps_create_session to start one."
-                    : "No sessions found.",
-              },
-            ],
-          };
+          const msg = status === "running"
+            ? "No running sessions. Use nps_create_session to start one, or 'running_and_pending' to include recently created sessions."
+            : status === "running_and_pending"
+              ? "No running or recently pending sessions."
+              : "No sessions found.";
+          return { content: [{ type: "text", text: msg }] };
         }
 
-        const formatted = filtered.map(formatSession).join("\n---\n");
-        return {
-          content: [
-            {
-              type: "text",
-              text: `${filtered.length} session(s):\n\n${formatted}`,
-            },
-          ],
-        };
+        // Group by status for summary
+        const running = filtered.filter((s) => s.status === 1);
+        const pending = filtered.filter((s) => s.status === 0);
+
+        let text = "";
+        if (running.length > 0) {
+          text += `${running.length} running session(s):\n\n`;
+          text += running.map(formatSession).join("\n---\n");
+        }
+        if (pending.length > 0) {
+          if (text) text += "\n\n";
+          text += `${pending.length} pending session(s) (created in last hour):\n\n`;
+          text += pending.map(formatSession).join("\n---\n");
+        }
+        if (status === "all" && filtered.length > running.length + pending.length) {
+          const other = filtered.filter((s) => s.status > 1);
+          if (text) text += "\n\n";
+          text += `${other.length} other session(s) (completed/failed/etc.):\n\n`;
+          text += other.slice(0, 10).map(formatSession).join("\n---\n");
+          if (other.length > 10) {
+            text += `\n... and ${other.length - 10} more. Use nps_search_sessions for full history.`;
+          }
+        }
+
+        return { content: [{ type: "text", text }] };
       } catch (error) {
         return {
           content: [{ type: "text", text: formatToolError(error) }],
@@ -235,15 +263,20 @@ export function registerSessionTools(server: McpServer): void {
   );
 
   /**
-   * nps_get_connection — Get RDP file or SSH URL for a running session
+   * nps_get_connection — Get and launch RDP/SSH connection for a running session
    */
   server.tool(
     "nps_get_connection",
-    "Get the connection details for a running activity session. Returns an RDP file for Windows/AD resources or an SSH URL for Linux resources.",
+    "Get connection details for a running session. For Windows/AD resources, saves an RDP file to a temp path ready to open. For Linux/SSH resources, returns the SSH proxy command. The RDP file connects through the NPS proxy (not directly to the target) using an encrypted session token.",
     {
       sessionId: z.string().describe("The activity session ID (GUID)"),
+      autoOpen: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe("If true, include a shell command to open the RDP file (macOS: open, Linux: xdg-open)"),
     },
-    async ({ sessionId }) => {
+    async ({ sessionId, autoOpen }) => {
       try {
         // First get the session to determine platform
         const session = await npsApi<NpsActivitySession>(
@@ -273,30 +306,57 @@ export function registerSessionTools(server: McpServer): void {
           };
         }
 
+        const resourceName = session.managedResource?.displayName || session.managedResource?.name || "unknown";
+        const shortId = sessionId.substring(0, 8);
+
         if (isRdpPlatform(platformId)) {
           const rdpContent = await npsApi<string>(
             `/api/v1/ActivitySession/Rdp/${sessionId}`
           );
-          return {
-            content: [
-              {
-                type: "text",
-                text: `RDP Connection for ${session.managedResource?.name}:\n\nRDP File Contents:\n${rdpContent}\n\nSave this as a .rdp file and open it, or use the connection details above with your RDP client.`,
-              },
-            ],
-          };
+
+          // Save RDP file to temp directory
+          const filename = `nps-${resourceName.replace(/[^a-zA-Z0-9._-]/g, "_")}-${shortId}.rdp`;
+          const rdpPath = join(tmpdir(), filename);
+          writeFileSync(rdpPath, rdpContent, "utf-8");
+
+          let text = `RDP Connection for ${resourceName}\n\n`;
+          text += `RDP file saved to: ${rdpPath}\n`;
+          text += `Session ID: ${sessionId}\n\n`;
+
+          // Parse key fields from the RDP content for display
+          const fullAddr = rdpContent.match(/full address:s:(.+)/)?.[1] || "?";
+          const port = rdpContent.match(/server port:i:(\d+)/)?.[1] || "?";
+          text += `Proxy: ${fullAddr}:${port} (NPS gateway — not the target directly)\n`;
+          text += `Connection is proxied through NPS for recording and credential injection.\n`;
+
+          if (autoOpen) {
+            const opener = process.platform === "darwin" ? "open" : "xdg-open";
+            text += `\nTo launch: ${opener} "${rdpPath}"`;
+          } else {
+            text += `\nTo connect, open the RDP file: open "${rdpPath}"`;
+          }
+
+          return { content: [{ type: "text", text }] };
         } else {
           const sshUrl = await npsApi<string>(
             `/api/v1/ActivitySession/Ssh/${sessionId}`
           );
-          return {
-            content: [
-              {
-                type: "text",
-                text: `SSH Connection for ${session.managedResource?.name}:\n\n${sshUrl}\n\nUse this URL with your SSH client.`,
-              },
-            ],
-          };
+
+          let text = `SSH Connection for ${resourceName}\n\n`;
+          text += `Session ID: ${sessionId}\n`;
+          text += `SSH URL: ${sshUrl}\n\n`;
+
+          // Try to parse ssh:// URL into a usable command
+          const sshMatch = sshUrl.match(/ssh:\/\/([^@]+)@([^:]+):?(\d+)?/);
+          if (sshMatch) {
+            const [, user, host, sshPort] = sshMatch;
+            const portFlag = sshPort && sshPort !== "22" ? ` -p ${sshPort}` : "";
+            text += `SSH command: ssh ${user}@${host}${portFlag}\n`;
+          }
+
+          text += `Connection is proxied through NPS for recording and credential injection.`;
+
+          return { content: [{ type: "text", text }] };
         }
       } catch (error) {
         return {
