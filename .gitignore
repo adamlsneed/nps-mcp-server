@@ -20,3 +20,13 @@ Thumbs.db
 
 # TypeScript cache
 *.tsbuildinfo
+
+# Test scratch files (ad-hoc exploration scripts)
+test-*.mjs
+!test/
+
+# Certificates and keys
+*.pfx
+*.pem
+*.key
+*.p12
