@@ -5,7 +5,8 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "nps-mcp-server": "dist/index.js"
+    "nps-mcp-server": "dist/index.js",
+    "nps-auth": "dist/auth-helper.js"
   },
   "scripts": {
     "build": "tsc",

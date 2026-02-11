@@ -6,7 +6,7 @@
  */
 
 import { NpsConfig, loadConfig } from "./config.js";
-import { getToken, clearToken } from "./auth.js";
+import { getToken, clearToken, hasAdminRoleClaim } from "./auth.js";
 
 let config: NpsConfig | null = null;
 
@@ -98,6 +98,19 @@ export async function npsApi<T = unknown>(
     } catch {
       errorMessage = errorText;
     }
+
+    // Detect 403 with API key auth and provide targeted guidance
+    if (response.status === 403 && cfg.authStrategy === "apikey") {
+      const hasRole = hasAdminRoleClaim(token);
+      if (!hasRole) {
+        errorMessage +=
+          "\n\n[API Key Auth Limitation] The JWT token from API key auth is missing " +
+          "admin role claims (known NPS bug). Most endpoints return 403.\n" +
+          "Switch to interactive auth (NPS_PASSWORD + NPS_MFA_CODE) or use a " +
+          "browser token (NPS_TOKEN). Run `npx nps-auth` to get a token.";
+      }
+    }
+
     throw new NpsApiError(response.status, errorMessage, path);
   }
 
