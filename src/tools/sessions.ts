@@ -45,7 +45,8 @@ function formatSession(s: NpsActivitySession): string {
   const resource = s.managedResource?.displayName || s.managedResource?.name || "Unknown";
   const activity = s.activity?.name || "Unknown";
   const policy = s.accessControlPolicy?.name || "";
-  const status = `${sessionStatusLabel(s.status)} — ${s.statusDescription}`;
+  const statusDesc = s.statusDescription || sessionStatusLabel(s.status);
+  const status = statusDesc;
   const platform = s.managedResource?.platformId
     ? platformName(s.managedResource.platformId)
     : "";
@@ -129,7 +130,10 @@ export function registerSessionTools(server: McpServer): void {
         }
         if (pending.length > 0) {
           if (text) text += "\n\n";
-          text += `${pending.length} pending session(s) (created in last hour):\n\n`;
+          const pendingLabel = status === "running_and_pending"
+            ? `${pending.length} pending session(s) (created in last hour):`
+            : `${pending.length} pending/created session(s):`;
+          text += `${pendingLabel}\n\n`;
           text += pending.map(formatSession).join("\n---\n");
         }
         if (status === "all" && filtered.length > running.length + pending.length) {
@@ -378,8 +382,6 @@ export function registerSessionTools(server: McpServer): void {
     },
     async ({ sessionId }) => {
       try {
-        // TODO: Verify the exact endpoint for ending sessions
-        // Likely DELETE /api/v1/ActivitySession/{id} or POST /api/v1/ActivitySession/{id}/End
         await npsApi(`/api/v1/ActivitySession/${sessionId}`, {
           method: "DELETE",
         });

@@ -137,17 +137,49 @@ export function registerAuditTools(server: McpServer): void {
    */
   server.tool(
     "nps_resource_sessions",
-    "Get session history for a specific managed resource. Shows who accessed it, when, for how long, and what activity was used.",
+    "Get session history for a specific managed resource. Shows who accessed it, when, for how long, and what activity was used. Accepts either a resource ID (GUID) or name (DNS hostname).",
     {
-      resourceId: z.string().describe("The managed resource ID (GUID)"),
+      resourceId: z.string().optional().describe("The managed resource ID (GUID)"),
+      resourceName: z.string().optional().describe("Resource name or DNS hostname (e.g., 'FS1.adamsneed.com'). Resolves to ID automatically."),
       startDate: z.string().optional().describe("Start date filter (ISO 8601)"),
       endDate: z.string().optional().describe("End date filter (ISO 8601)"),
       filterText: z.string().optional().describe("Search text to filter results"),
       skip: z.number().optional().default(0).describe("Skip N results"),
       take: z.number().optional().default(25).describe("Number of results (default: 25)"),
     },
-    async ({ resourceId, startDate, endDate, filterText, skip, take }) => {
+    async ({ resourceId, resourceName, startDate, endDate, filterText, skip, take }) => {
       try {
+        // Resolve resource name to ID if needed
+        let resolvedId = resourceId;
+        let resolvedName = resourceName;
+        if (!resolvedId && resourceName) {
+          interface NpsResource { id: string; name: string; displayName?: string; dnsHostName?: string; ipAddress?: string; }
+          const resources = await npsApi<NpsResource[]>("/api/v1/ManagedResource");
+          const term = resourceName.toLowerCase();
+          const match = resources.find(
+            (r) =>
+              r.name?.toLowerCase() === term ||
+              r.displayName?.toLowerCase() === term ||
+              r.dnsHostName?.toLowerCase() === term ||
+              r.name?.toLowerCase().includes(term) ||
+              r.dnsHostName?.toLowerCase().includes(term)
+          );
+          if (!match) {
+            return {
+              content: [{ type: "text", text: `Resource "${resourceName}" not found. Use nps_list_resources to find available resources.` }],
+              isError: true,
+            };
+          }
+          resolvedId = match.id;
+          resolvedName = match.displayName || match.name;
+        }
+        if (!resolvedId) {
+          return {
+            content: [{ type: "text", text: "Provide either resourceId or resourceName." }],
+            isError: true,
+          };
+        }
+
         const params: Record<string, string | number | boolean | undefined> = {
           skip,
           take,
@@ -157,7 +189,7 @@ export function registerAuditTools(server: McpServer): void {
         if (filterText) params.filterText = filterText;
 
         const result = await npsApi<SessionSearchResults>(
-          `/api/v1/ActivitySession/SummaryForResource/${resourceId}`,
+          `/api/v1/ActivitySession/SummaryForResource/${resolvedId}`,
           { params }
         );
 
@@ -166,11 +198,11 @@ export function registerAuditTools(server: McpServer): void {
 
         if (total === 0) {
           return {
-            content: [{ type: "text", text: `No sessions found for resource ${resourceId}.` }],
+            content: [{ type: "text", text: `No sessions found for resource ${resolvedName || resolvedId}.` }],
           };
         }
 
-        let text = `Resource Session History — ${total} sessions\n`;
+        let text = `Resource Session History for ${resolvedName || resolvedId} — ${total} sessions\n`;
         text += `Showing ${skip + 1}–${skip + sessions.length} of ${total}\n\n`;
 
         for (const s of sessions) {
@@ -644,21 +676,20 @@ export function registerAuditTools(server: McpServer): void {
    */
   server.tool(
     "nps_action_queue",
-    "View the NPS action execution queue. Shows actions executed by the system (provisioning, credential rotation, cleanup, etc.) with status and timing. Useful for auditing what NPS actually did.",
+    "View the NPS action execution queue. Shows recent system actions (provisioning, credential rotation, cleanup, etc.). NOTE: This downloads a large dataset (77K+ items). For session-specific logs, prefer nps_session_logs which is much faster.",
     {
-      sessionId: z.string().optional().describe("Filter by activity session ID"),
-      filterText: z.string().optional().describe("Search text to filter actions"),
-      skip: z.number().optional().default(0).describe("Skip N results"),
-      take: z.number().optional().default(25).describe("Number of results (default: 25)"),
-      orderDescending: z
+      recentOnly: z
         .boolean()
         .optional()
         .default(true)
-        .describe("Sort newest first (default: true)"),
+        .describe("Only show the most recent 100 items (default: true). Set false for full queue."),
+      skip: z.number().optional().default(0).describe("Skip N results"),
+      take: z.number().optional().default(25).describe("Number of results (default: 25)"),
     },
-    async ({ sessionId, filterText, skip, take, orderDescending }) => {
+    async ({ recentOnly, skip, take }) => {
       try {
-        // ActionQueue returns a flat array with sparse fields
+        // ActionQueue returns a flat array (77K+ items, ~1.5s).
+        // The API does NOT support server-side filtering or pagination.
         interface ActionQueueItem {
           id?: string;
           status?: number;
@@ -668,19 +699,14 @@ export function registerAuditTools(server: McpServer): void {
           [key: string]: unknown;
         }
 
-        const params: Record<string, string | number | boolean | undefined> = {};
-        if (sessionId) params.activitySessionId = sessionId;
-        if (filterText) params.filterText = filterText;
-
-        // Returns a flat array — we do client-side pagination
-        const raw = await npsApi<ActionQueueItem[]>(
-          "/api/v1/ActionQueue",
-          { params }
-        );
+        const raw = await npsApi<ActionQueueItem[]>("/api/v1/ActionQueue");
 
         const allItems = Array.isArray(raw) ? raw : [];
         const total = allItems.length;
-        const items = allItems.slice(skip, skip + take);
+
+        // Limit to recent items by default to avoid overwhelming output
+        const pool = recentOnly ? allItems.slice(0, 100) : allItems;
+        const items = pool.slice(skip, skip + take);
 
         if (items.length === 0) {
           return {
@@ -700,8 +726,11 @@ export function registerAuditTools(server: McpServer): void {
           }
         };
 
-        let text = `Action Queue — ${total} total items\n`;
-        text += `Showing ${skip + 1}–${skip + items.length} of ${total}\n\n`;
+        let text = `Action Queue — ${total} total items`;
+        if (recentOnly) text += ` (showing recent only)`;
+        text += `\nShowing ${skip + 1}–${skip + items.length} of ${pool.length}`;
+        if (recentOnly && total > 100) text += ` (${total} total, limited to 100 most recent)`;
+        text += `\n\n`;
 
         for (const a of items) {
           const id = a.id ? a.id.substring(0, 8) + "..." : "?";
@@ -714,8 +743,8 @@ export function registerAuditTools(server: McpServer): void {
           text += "\n";
         }
 
-        if (skip + items.length < total) {
-          text += `\n... ${total - skip - items.length} more. Use skip=${skip + take} to continue.`;
+        if (skip + items.length < pool.length) {
+          text += `\n... ${pool.length - skip - items.length} more. Use skip=${skip + take} to continue.`;
         }
 
         return { content: [{ type: "text", text }] };
