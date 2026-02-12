@@ -140,7 +140,7 @@ function parseFormBody(req: IncomingMessage): Promise<Record<string, string>> {
  * @param npsUrl - The NPS server URL (for the login link)
  * @returns port, a promise that resolves with the token, and a close function
  */
-export function startAuthServer(npsUrl: string): AuthServerResult {
+export async function startAuthServer(npsUrl: string): Promise<AuthServerResult> {
   let tokenReceived = false;
   let resolveToken: (token: string) => void;
   let rejectToken: (err: Error) => void;
@@ -198,8 +198,15 @@ export function startAuthServer(npsUrl: string): AuthServerResult {
     res.end("Not found");
   });
 
-  // Bind to random available port on localhost only
-  server.listen(0, "127.0.0.1");
+  // Bind to random available port on localhost only and wait until ready
+  const port = await new Promise<number>((resolve, reject) => {
+    server.listen(0, "127.0.0.1", () => {
+      const addr = server.address();
+      const p = typeof addr === "object" && addr ? addr.port : 0;
+      resolve(p);
+    });
+    server.on("error", reject);
+  });
 
   const timeout = setTimeout(() => {
     if (!tokenReceived) {
@@ -212,9 +219,6 @@ export function startAuthServer(npsUrl: string): AuthServerResult {
     clearTimeout(timeout);
     server.close();
   }
-
-  // Get the assigned port once the server is listening
-  const port = (server.address() as { port: number })?.port || 0;
 
   return {
     port,

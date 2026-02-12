@@ -20,7 +20,7 @@ export function registerAuthTools(server: McpServer): void {
     async () => {
       try {
         const config = loadConfig();
-        const { port, tokenPromise } = startAuthServer(config.baseUrl);
+        const { port, tokenPromise } = await startAuthServer(config.baseUrl);
         const localUrl = `http://localhost:${port}`;
 
         // Open browser to landing page

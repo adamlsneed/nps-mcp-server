@@ -55,6 +55,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
+// Resources
+import { registerGlossary } from "./glossary.js";
+
 // Tool registrations
 import { registerAuthTools } from "./tools/auth-tools.js";
 import { registerSystemTools } from "./tools/system.js";
@@ -75,6 +78,9 @@ async function main() {
     description:
       "MCP server for Netwrix Privilege Secure 4.2 — manage privileged access sessions, resources, credentials, and policies",
   });
+
+  // Register resources
+  registerGlossary(server);
 
   // Register all tool groups
   registerAuthTools(server);
