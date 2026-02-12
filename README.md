@@ -1,6 +1,6 @@
 # NPS MCP Server
 
-MCP (Model Context Protocol) server for **Netwrix Privilege Secure (NPS) 4.2**. Gives Claude and other MCP clients full control over privileged access sessions, resources, credentials, and policies through 35 tools.
+MCP (Model Context Protocol) server for **Netwrix Privilege Secure (NPS) 25.12.00002**. Gives Claude and other MCP clients full control over privileged access sessions, resources, credentials, and policies through 35 tools.
 
 ## Quick Start
 
@@ -280,7 +280,7 @@ src/
 ## Requirements
 
 - Node.js 18+
-- NPS 4.2 (tested against server version 25.12.00002)
+- NPS 25.12.00002 or later
 - Network access to NPS server (default port 6500)
 
 ## License
