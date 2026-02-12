@@ -3,11 +3,11 @@
  */
 
 import { z } from "zod";
-import { execSync } from "node:child_process";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { startAuthServer } from "../auth-server.js";
-import { setToken, parseJwt, hasAdminRoleClaim } from "../auth.js";
+import { setToken } from "../auth.js";
 import { loadConfig } from "../config.js";
+import { openWithDefault, summarizeJwt } from "../utils.js";
 
 export function registerAuthTools(server: McpServer): void {
   /**
@@ -23,18 +23,7 @@ export function registerAuthTools(server: McpServer): void {
         const { port, tokenPromise } = await startAuthServer(config.baseUrl);
         const localUrl = `http://localhost:${port}`;
 
-        // Open browser to landing page
-        try {
-          if (process.platform === "darwin") {
-            execSync(`open "${localUrl}"`);
-          } else if (process.platform === "win32") {
-            execSync(`start "" "${localUrl}"`);
-          } else {
-            execSync(`xdg-open "${localUrl}"`);
-          }
-        } catch {
-          // Browser open failed — user can navigate manually
-        }
+        openWithDefault(localUrl);
 
         // Listen for the token in the background (don't block the tool response)
         tokenPromise
@@ -112,44 +101,23 @@ export function registerAuthTools(server: McpServer): void {
         }
 
         const version = await response.text();
-
-        // Store the token
         setToken(token);
 
-        // Parse JWT for user info
-        const claims = parseJwt(token);
-        const lines: string[] = ["Token accepted and stored."];
-        lines.push("");
-        lines.push(`NPS Server: ${version.replace(/^"|"$/g, "")}`);
-
-        if (claims) {
-          const nameClaim =
-            claims["http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name"] ||
-            claims["unique_name"] ||
-            claims["sub"];
-          if (nameClaim) lines.push(`User: ${nameClaim}`);
-
-          const roleClaim = claims["http://schemas.microsoft.com/ws/2008/06/identity/claims/role"];
-          if (roleClaim) {
-            const roles = Array.isArray(roleClaim) ? roleClaim.join(", ") : String(roleClaim);
-            lines.push(`Role: ${roles}`);
-          }
-
-          const hasAdmin = hasAdminRoleClaim(token);
-          lines.push(`Admin: ${hasAdmin ? "Yes" : "No — most API calls will fail with 403"}`);
-
-          if (typeof claims["exp"] === "number") {
-            const expDate = new Date(claims["exp"] * 1000);
-            const remainMin = Math.round((expDate.getTime() - Date.now()) / 60_000);
-            lines.push(`Expires: ${expDate.toISOString()} (${remainMin} minutes)`);
-          }
+        const jwt = summarizeJwt(token);
+        const lines: string[] = [
+          "Token accepted and stored.",
+          "",
+          `NPS Server: ${version.replace(/^"|"$/g, "")}`,
+        ];
+        if (jwt.username) lines.push(`User: ${jwt.username}`);
+        if (jwt.roles) lines.push(`Role: ${jwt.roles}`);
+        lines.push(`Admin: ${jwt.hasAdmin ? "Yes" : "No — most API calls will fail with 403"}`);
+        if (jwt.expiresAt) {
+          lines.push(`Expires: ${jwt.expiresAt.toISOString()} (${jwt.remainingMinutes} minutes)`);
         }
 
         process.stderr.write("[auth] Token manually set via nps_set_token\n");
-
-        return {
-          content: [{ type: "text", text: lines.join("\n") }],
-        };
+        return { content: [{ type: "text", text: lines.join("\n") }] };
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         return {

@@ -10,7 +10,6 @@
  */
 
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
-import { parse as parseUrl } from "node:url";
 
 const TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -151,9 +150,9 @@ export async function startAuthServer(npsUrl: string): Promise<AuthServerResult>
   });
 
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
-    const parsed = parseUrl(req.url || "/", true);
+    const pathname = new URL(req.url || "/", "http://localhost").pathname;
 
-    if (req.method === "GET" && parsed.pathname === "/") {
+    if (req.method === "GET" && pathname === "/") {
       // Serve landing page
       const addr = server.address();
       const port = typeof addr === "object" && addr ? addr.port : 0;
@@ -163,7 +162,7 @@ export async function startAuthServer(npsUrl: string): Promise<AuthServerResult>
       return;
     }
 
-    if (req.method === "POST" && parsed.pathname === "/callback") {
+    if (req.method === "POST" && pathname === "/callback") {
       try {
         const form = await parseFormBody(req);
         const token = form.token;
@@ -188,7 +187,7 @@ export async function startAuthServer(npsUrl: string): Promise<AuthServerResult>
       return;
     }
 
-    if (req.method === "GET" && parsed.pathname === "/status") {
+    if (req.method === "GET" && pathname === "/status") {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ received: tokenReceived }));
       return;

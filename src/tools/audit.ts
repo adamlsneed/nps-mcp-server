@@ -9,7 +9,64 @@ import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { npsApi, formatToolError } from "../client.js";
 import { formatDuration } from "../types.js";
+import { resolveResource } from "../utils.js";
 import type { SessionSearchResults, SessionSummaryRecord } from "../types.js";
+
+interface CredentialHealthRecord {
+  id?: string;
+  userName?: string;
+  displayName?: string;
+  samAccountName?: string;
+  domain?: string;
+  resource?: string;
+  platform?: string;
+  platformId?: string;
+  managedResourceId?: string;
+  age?: number;
+  passwordStatus?: number;
+  rotationType?: number;
+  lastPasswordChangeDateTimeUtc?: string;
+  nextPasswordChangeDateTimeUtc?: string;
+  lastVerifiedDateTimeUtc?: string;
+  dependencyCount?: number;
+  privilege?: number;
+  privilegeName?: string;
+  credentialType?: number;
+  managedType?: number;
+  status?: string;
+}
+
+interface CredentialHealthResult {
+  data: CredentialHealthRecord[];
+  recordsTotal: number;
+}
+
+interface PolicySearchResult {
+  data?: Array<{
+    id?: string;
+    name?: string;
+    displayName?: string;
+    samAccountName?: string;
+    email?: string;
+    domain?: string;
+    dnsHostName?: string;
+    platformId?: string;
+    os?: string;
+    activeSessionCount?: number;
+    description?: string;
+    entityType?: number;
+  }>;
+  recordsTotal?: number;
+}
+
+interface ActionQueueItem {
+  id?: string;
+  status?: number;
+  statusDescription?: string;
+  actionQueueActionStatus?: number;
+  startTime?: string;
+  [key: string]: unknown;
+}
 
 function formatSessionRow(s: SessionSummaryRecord): string {
   const res = s.managedResourceName ?? "Unknown";
@@ -153,17 +210,7 @@ export function registerAuditTools(server: McpServer): void {
         let resolvedId = resourceId;
         let resolvedName = resourceName;
         if (!resolvedId && resourceName) {
-          interface NpsResource { id: string; name: string; displayName?: string; dnsHostName?: string; ipAddress?: string; }
-          const resources = await npsApi<NpsResource[]>("/api/v1/ManagedResource");
-          const term = resourceName.toLowerCase();
-          const match = resources.find(
-            (r) =>
-              r.name?.toLowerCase() === term ||
-              r.displayName?.toLowerCase() === term ||
-              r.dnsHostName?.toLowerCase() === term ||
-              r.name?.toLowerCase().includes(term) ||
-              r.dnsHostName?.toLowerCase().includes(term)
-          );
+          const match = await resolveResource(resourceName);
           if (!match) {
             return {
               content: [{ type: "text", text: `Resource "${resourceName}" not found. Use nps_list_resources to find available resources.` }],
@@ -420,33 +467,6 @@ export function registerAuditTools(server: McpServer): void {
     },
     async ({ filterText, managedType, credentialType, onlyManaged, skip, take }) => {
       try {
-        interface CredentialSearchResult {
-          data: Array<{
-            id?: string;
-            userName?: string;
-            displayName?: string;
-            samAccountName?: string;
-            domain?: string;
-            resource?: string;
-            platform?: string;
-            platformId?: string;
-            managedResourceId?: string;
-            age?: number;
-            passwordStatus?: number;
-            rotationType?: number;
-            lastPasswordChangeDateTimeUtc?: string;
-            nextPasswordChangeDateTimeUtc?: string;
-            lastVerifiedDateTimeUtc?: string;
-            dependencyCount?: number;
-            privilege?: number;
-            privilegeName?: string;
-            credentialType?: number;
-            managedType?: number;
-            status?: string;
-          }>;
-          recordsTotal: number;
-        }
-
         const params: Record<string, string | number | boolean | undefined> = {
           skip,
           take,
@@ -456,7 +476,7 @@ export function registerAuditTools(server: McpServer): void {
         if (filterText) params.filterText = filterText;
         if (onlyManaged) params.managedFilter = "Managed";
 
-        const result = await npsApi<CredentialSearchResult>(
+        const result = await npsApi<CredentialHealthResult>(
           "/api/v1/Credential/Search",
           { params }
         );
@@ -574,49 +594,15 @@ export function registerAuditTools(server: McpServer): void {
     },
     async ({ policyId }) => {
       try {
-        interface PolicyUsers {
-          data?: Array<{
-            id?: string;
-            name?: string;
-            displayName?: string;
-            samAccountName?: string;
-            email?: string;
-            domain?: string;
-            entityType?: number;
-          }>;
-          recordsTotal?: number;
-        }
-        interface PolicyResources {
-          data?: Array<{
-            id?: string;
-            name?: string;
-            dnsHostName?: string;
-            platformId?: string;
-            os?: string;
-            activeSessionCount?: number;
-            entityType?: number;
-          }>;
-          recordsTotal?: number;
-        }
-        interface PolicyActivities {
-          data?: Array<{
-            id?: string;
-            name?: string;
-            description?: string;
-            entityType?: number;
-          }>;
-          recordsTotal?: number;
-        }
-
         // Fetch all three in parallel
         const [users, resources, activities] = await Promise.all([
-          npsApi<PolicyUsers>(
+          npsApi<PolicySearchResult>(
             `/api/v1/AccessControlPolicy/SearchManagedAccounts/${policyId}`
           ),
-          npsApi<PolicyResources>(
+          npsApi<PolicySearchResult>(
             `/api/v1/AccessControlPolicy/SearchResources/${policyId}`
           ),
-          npsApi<PolicyActivities>(
+          npsApi<PolicySearchResult>(
             `/api/v1/AccessControlPolicy/SearchActivities/${policyId}`
           ),
         ]);
@@ -690,15 +676,6 @@ export function registerAuditTools(server: McpServer): void {
       try {
         // ActionQueue returns a flat array (77K+ items, ~1.5s).
         // The API does NOT support server-side filtering or pagination.
-        interface ActionQueueItem {
-          id?: string;
-          status?: number;
-          statusDescription?: string;
-          actionQueueActionStatus?: number;
-          startTime?: string;
-          [key: string]: unknown;
-        }
-
         const raw = await npsApi<ActionQueueItem[]>("/api/v1/ActionQueue");
 
         const allItems = Array.isArray(raw) ? raw : [];

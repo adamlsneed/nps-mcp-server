@@ -4,8 +4,9 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { npsApi, formatToolError } from "../client.js";
-import { getTokenState, parseJwt, hasAdminRoleClaim } from "../auth.js";
+import { getTokenState, hasAdminRoleClaim } from "../auth.js";
 import { loadConfig } from "../config.js";
+import { summarizeJwt } from "../utils.js";
 
 export function registerSystemTools(server: McpServer): void {
   /**
@@ -19,12 +20,7 @@ export function registerSystemTools(server: McpServer): void {
       try {
         const version = await npsApi<string>("/api/v1/Version");
         return {
-          content: [
-            {
-              type: "text",
-              text: `NPS Server Version: ${version}`,
-            },
-          ],
+          content: [{ type: "text", text: `NPS Server Version: ${version}` }],
         };
       } catch (error) {
         return {
@@ -46,10 +42,7 @@ export function registerSystemTools(server: McpServer): void {
       try {
         const config = loadConfig();
         const tokenState = getTokenState();
-
-        const lines: string[] = [];
-        lines.push(`Auth Strategy: ${config.authStrategy}`);
-        lines.push("");
+        const lines: string[] = [`Auth Strategy: ${config.authStrategy}`, ""];
 
         if (!tokenState) {
           if (config.authStrategy === "browser") {
@@ -60,66 +53,41 @@ export function registerSystemTools(server: McpServer): void {
             lines.push("Token: Not yet acquired (will authenticate on first API call)");
           }
         } else {
-          const now = Date.now();
-          const ageMs = now - tokenState.acquiredAt;
-          const ageMin = Math.round(ageMs / 60_000);
+          const ageMin = Math.round((Date.now() - tokenState.acquiredAt) / 60_000);
           lines.push(`Token Age: ${ageMin} minutes`);
 
-          if (tokenState.expiresAt) {
-            const remainMs = tokenState.expiresAt - now;
-            const remainMin = Math.round(remainMs / 60_000);
+          const jwt = summarizeJwt(tokenState.token);
+
+          if (jwt.expiresAt) {
+            const remainMs = jwt.expiresAt.getTime() - Date.now();
             if (remainMs > 0) {
-              lines.push(`Token Expires In: ${remainMin} minutes`);
+              lines.push(`Token Expires In: ${jwt.remainingMinutes} minutes`);
             } else {
-              lines.push(`Token: EXPIRED (${Math.abs(remainMin)} minutes ago)`);
+              lines.push(`Token: EXPIRED (${Math.abs(jwt.remainingMinutes!)} minutes ago)`);
             }
           } else {
             lines.push("Token Expiry: Unknown (no exp claim in JWT)");
           }
 
-          // Parse JWT claims
-          const claims = parseJwt(tokenState.token);
+          lines.push("");
+          lines.push("JWT Claims:");
+          if (jwt.username) lines.push(`  Username: ${jwt.username}`);
+          if (jwt.roles) {
+            lines.push(`  Role: ${jwt.roles}`);
+          } else {
+            lines.push("  Role: ⚠ MISSING (no role claim in JWT)");
+          }
+          lines.push(`  Has Admin Role: ${jwt.hasAdmin ? "Yes" : "⚠ No"}`);
+
+          // Extra claims not covered by summarizeJwt
+          const claims = (await import("../auth.js")).parseJwt(tokenState.token);
           if (claims) {
-            lines.push("");
-            lines.push("JWT Claims:");
-
-            // Username claims (NPS uses various claim URIs)
-            const nameClaim =
-              claims["http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name"] ||
-              claims["unique_name"] ||
-              claims["sub"];
-            if (nameClaim) lines.push(`  Username: ${nameClaim}`);
-
-            // Role claim
-            const roleClaim = claims["http://schemas.microsoft.com/ws/2008/06/identity/claims/role"];
-            if (roleClaim) {
-              const roles = Array.isArray(roleClaim) ? roleClaim.join(", ") : String(roleClaim);
-              lines.push(`  Role: ${roles}`);
-            } else {
-              lines.push("  Role: ⚠ MISSING (no role claim in JWT)");
-            }
-
-            // Admin role check
-            const hasAdmin = hasAdminRoleClaim(tokenState.token);
-            lines.push(`  Has Admin Role: ${hasAdmin ? "Yes" : "⚠ No"}`);
-
-            // MFA claim
-            if (claims["isMFA"] !== undefined) {
-              lines.push(`  MFA Authenticated: ${claims["isMFA"]}`);
-            }
-
-            // Local user
-            if (claims["isLocalUser"] !== undefined) {
-              lines.push(`  Local User: ${claims["isLocalUser"]}`);
-            }
-
-            // Issued at
+            if (claims["isMFA"] !== undefined) lines.push(`  MFA Authenticated: ${claims["isMFA"]}`);
+            if (claims["isLocalUser"] !== undefined) lines.push(`  Local User: ${claims["isLocalUser"]}`);
             if (typeof claims["iat"] === "number") {
               lines.push(`  Issued At: ${new Date(claims["iat"] * 1000).toISOString()}`);
             }
-            if (typeof claims["exp"] === "number") {
-              lines.push(`  Expires At: ${new Date(claims["exp"] * 1000).toISOString()}`);
-            }
+            if (jwt.expiresAt) lines.push(`  Expires At: ${jwt.expiresAt.toISOString()}`);
           }
 
           // Warn if API key auth without role claims
@@ -135,16 +103,12 @@ export function registerSystemTools(server: McpServer): void {
         // Server version
         try {
           const version = await npsApi<string>("/api/v1/Version");
-          lines.push("");
-          lines.push(`NPS Server Version: ${version}`);
+          lines.push("", `NPS Server Version: ${version}`);
         } catch {
-          lines.push("");
-          lines.push("NPS Server: Unable to reach (authentication or connectivity issue)");
+          lines.push("", "NPS Server: Unable to reach (authentication or connectivity issue)");
         }
 
-        return {
-          content: [{ type: "text", text: lines.join("\n") }],
-        };
+        return { content: [{ type: "text", text: lines.join("\n") }] };
       } catch (error) {
         return {
           content: [{ type: "text", text: formatToolError(error) }],

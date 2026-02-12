@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { npsApi, formatToolError } from "../client.js";
 import { isRdpPlatform, platformName, sessionStatusLabel } from "../types.js";
+import { openWithDefault, openInTerminal } from "../utils.js";
 import type { ActionLogCollection } from "../types.js";
 
 // Subset of the (very verbose) ActivitySession response
@@ -271,16 +272,11 @@ export function registerSessionTools(server: McpServer): void {
    */
   server.tool(
     "nps_get_connection",
-    "Get connection details for a running session. For Windows/AD resources, saves an RDP file to a temp path ready to open. For Linux/SSH resources, returns the SSH proxy command. The RDP file connects through the NPS proxy (not directly to the target) using an encrypted session token.",
+    "Get and launch a connection for a running session. For Windows/AD resources, fetches a tokenized RDP file and immediately opens it (the token expires in ~60 seconds so auto-launch is required). For Linux/SSH resources, opens a terminal with the SSH command. The connection is proxied through NPS for recording and credential injection.",
     {
       sessionId: z.string().describe("The activity session ID (GUID)"),
-      autoOpen: z
-        .boolean()
-        .optional()
-        .default(false)
-        .describe("If true, include a shell command to open the RDP file (macOS: open, Linux: xdg-open)"),
     },
-    async ({ sessionId, autoOpen }) => {
+    async ({ sessionId }) => {
       try {
         // First get the session to determine platform
         const session = await npsApi<NpsActivitySession>(
@@ -323,21 +319,24 @@ export function registerSessionTools(server: McpServer): void {
           const rdpPath = join(tmpdir(), filename);
           writeFileSync(rdpPath, rdpContent, "utf-8");
 
-          let text = `RDP Connection for ${resourceName}\n\n`;
-          text += `RDP file saved to: ${rdpPath}\n`;
-          text += `Session ID: ${sessionId}\n\n`;
-
           // Parse key fields from the RDP content for display
           const fullAddr = rdpContent.match(/full address:s:(.+)/)?.[1] || "?";
           const port = rdpContent.match(/server port:i:(\d+)/)?.[1] || "?";
-          text += `Proxy: ${fullAddr}:${port} (NPS gateway — not the target directly)\n`;
-          text += `Connection is proxied through NPS for recording and credential injection.\n`;
 
-          if (autoOpen) {
-            const opener = process.platform === "darwin" ? "open" : "xdg-open";
-            text += `\nTo launch: ${opener} "${rdpPath}"`;
+          // Immediately launch the RDP file — the token expires in ~60 seconds
+          const launched = openWithDefault(rdpPath);
+
+          let text = `RDP Connection for ${resourceName}\n\n`;
+          text += `Session ID: ${sessionId}\n`;
+          text += `Proxy: ${fullAddr}:${port} (NPS gateway)\n`;
+          text += `Connection is proxied through NPS for recording and credential injection.\n\n`;
+
+          if (launched) {
+            text += `RDP connection launched automatically. Microsoft Remote Desktop should be opening now.`;
           } else {
-            text += `\nTo connect, open the RDP file: open "${rdpPath}"`;
+            text += `RDP file saved to: ${rdpPath}\n`;
+            text += `Auto-launch failed — open the file manually ASAP (token expires in ~60 seconds):\n`;
+            text += `  open "${rdpPath}"`;
           }
 
           return { content: [{ type: "text", text }] };
@@ -346,19 +345,37 @@ export function registerSessionTools(server: McpServer): void {
             `/api/v1/ActivitySession/Ssh/${sessionId}`
           );
 
-          let text = `SSH Connection for ${resourceName}\n\n`;
-          text += `Session ID: ${sessionId}\n`;
-          text += `SSH URL: ${sshUrl}\n\n`;
-
-          // Try to parse ssh:// URL into a usable command
+          // Parse ssh:// URL into a usable command
           const sshMatch = sshUrl.match(/ssh:\/\/([^@]+)@([^:]+):?(\d+)?/);
+          let sshCommand = "";
           if (sshMatch) {
             const [, user, host, sshPort] = sshMatch;
             const portFlag = sshPort && sshPort !== "22" ? ` -p ${sshPort}` : "";
-            text += `SSH command: ssh ${user}@${host}${portFlag}\n`;
+            sshCommand = `ssh ${user}@${host}${portFlag}`;
           }
 
-          text += `Connection is proxied through NPS for recording and credential injection.`;
+          // Try to launch a terminal with the SSH command
+          let launched = false;
+          if (sshCommand) {
+            const scriptPath = join(tmpdir(), `nps-ssh-${shortId}.sh`);
+            writeFileSync(scriptPath, `#!/bin/bash\n${sshCommand}\n`, { mode: 0o755 });
+            launched = openInTerminal(scriptPath);
+          }
+
+          let text = `SSH Connection for ${resourceName}\n\n`;
+          text += `Session ID: ${sessionId}\n`;
+          text += `Connection is proxied through NPS for recording and credential injection.\n\n`;
+
+          if (launched) {
+            text += `SSH terminal launched automatically.\n`;
+            text += `Command: ${sshCommand}`;
+          } else if (sshCommand) {
+            text += `SSH command: ${sshCommand}\n`;
+            text += `(Could not auto-launch terminal — run the command above manually)`;
+          } else {
+            text += `SSH URL: ${sshUrl}\n`;
+            text += `(Could not parse SSH URL into a command)`;
+          }
 
           return { content: [{ type: "text", text }] };
         }

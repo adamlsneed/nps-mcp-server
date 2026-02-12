@@ -6,30 +6,10 @@ import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { npsApi, formatToolError } from "../client.js";
 import { platformName, isRdpPlatform } from "../types.js";
+import { resolveResource } from "../utils.js";
+import type { ManagedResource } from "../utils.js";
 
-// NPS ManagedResource response shape (subset of fields we care about)
-interface NpsManagedResource {
-  id: string;
-  name: string;
-  displayName?: string;
-  ipAddress?: string;
-  platformId: string;
-  platform?: { name: string };
-  hostId?: string;
-  host?: { hostName?: string; ipAddress?: string };
-  domainConfigId?: string;
-  serviceAccountId?: string;
-  dnsHostName?: string;
-  hostName?: string;
-  portSsh?: number;
-  portRdp?: number;
-  portWinRm?: number;
-  nodeId?: string;
-  createdDateTimeUtc?: string;
-  modifiedDateTimeUtc?: string;
-}
-
-function formatResource(r: NpsManagedResource): string {
+function formatResource(r: ManagedResource): string {
   const platform = r.platform?.name || platformName(r.platformId || null);
   const display = r.displayName || r.name;
   const ip = r.ipAddress || r.host?.ipAddress || "";
@@ -62,9 +42,7 @@ export function registerResourceTools(server: McpServer): void {
     },
     async ({ search }) => {
       try {
-        const resources = await npsApi<NpsManagedResource[]>(
-          "/api/v1/ManagedResource"
-        );
+        const resources = await npsApi<ManagedResource[]>("/api/v1/ManagedResource");
 
         let filtered = resources;
         if (search) {
@@ -122,18 +100,7 @@ export function registerResourceTools(server: McpServer): void {
     },
     async ({ resourceName }) => {
       try {
-        // Step 1: Resolve resource name to ID
-        const resources = await npsApi<NpsManagedResource[]>("/api/v1/ManagedResource");
-        const term = resourceName.toLowerCase();
-        const resource = resources.find(
-          (r) =>
-            r.name?.toLowerCase() === term ||
-            r.displayName?.toLowerCase() === term ||
-            r.dnsHostName?.toLowerCase() === term ||
-            r.name?.toLowerCase().includes(term) ||
-            r.dnsHostName?.toLowerCase().includes(term)
-        );
-
+        const resource = await resolveResource(resourceName);
         if (!resource) {
           return {
             content: [{ type: "text", text: `Resource "${resourceName}" not found. Use nps_list_resources to see available resources.` }],
@@ -145,25 +112,20 @@ export function registerResourceTools(server: McpServer): void {
         const platform = resource.platform?.name || platformName(resource.platformId);
         const connType = isRdpPlatform(resource.platformId) ? "RDP" : "SSH";
 
-        // Step 2: Get all policies
+        // Get all policies
         interface NpsPolicy {
           id: string;
           name: string;
           isDisabled?: boolean;
           policyType?: number;
         }
-        const policies = await npsApi<NpsPolicy[]>("/api/v1/AccessControlPolicy");
-        const activePolicies = policies.filter((p) => !p.isDisabled && p.policyType === 0);
-
-        // Step 3: For each policy, check if it includes this resource
-        interface PolicyResources {
-          data?: Array<{ id?: string; name?: string }>;
-          recordsTotal?: number;
-        }
-        interface PolicyActivities {
+        interface SearchResult {
           data?: Array<{ id?: string; name?: string; description?: string }>;
           recordsTotal?: number;
         }
+
+        const policies = await npsApi<NpsPolicy[]>("/api/v1/AccessControlPolicy");
+        const activePolicies = policies.filter((p) => !p.isDisabled && p.policyType === 0);
 
         const matchingPolicies: Array<{
           policyName: string;
@@ -175,15 +137,12 @@ export function registerResourceTools(server: McpServer): void {
           const batch = activePolicies.slice(i, i + 5);
           const results = await Promise.all(
             batch.map(async (policy) => {
-              const res = await npsApi<PolicyResources>(
+              const res = await npsApi<SearchResult>(
                 `/api/v1/AccessControlPolicy/SearchResources/${policy.id}`
               );
-              const hasResource = res.data?.some(
-                (r) => r.id === resource.id
-              );
-              if (!hasResource) return null;
+              if (!res.data?.some((r) => r.id === resource.id)) return null;
 
-              const acts = await npsApi<PolicyActivities>(
+              const acts = await npsApi<SearchResult>(
                 `/api/v1/AccessControlPolicy/SearchActivities/${policy.id}`
               );
               return {

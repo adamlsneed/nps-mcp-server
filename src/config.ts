@@ -6,24 +6,24 @@
  *
  * Auth strategies (auto-detected from which env vars are present):
  *
- * 1. Pre-supplied token (any auth provider — SAML, OIDC, Duo Push):
+ * 1. Browser login (default when only NPS_URL is set):
  *    NPS_URL        - Base URL of the NPS server
+ *    Use the nps_login tool to authenticate via browser (any method)
+ *
+ * 2. Pre-supplied token (any auth provider — SAML, OIDC, Duo Push):
  *    NPS_TOKEN      - Bearer token obtained from browser login
  *
- * 2. Interactive + static MFA (lab, "Not Required", static TOTP):
- *    NPS_URL        - Base URL of the NPS server
+ * 3. Interactive + static MFA (lab, "Not Required", static TOTP):
  *    NPS_USERNAME   - Login username (e.g., domain\user or admin)
  *    NPS_PASSWORD   - Login password
  *    NPS_MFA_CODE   - MFA code (default: 000000 for lab/dev)
  *
- * 3. Interactive + MFA prompt (Duo TOTP, rotating codes — Claude Code only):
- *    NPS_URL        - Base URL of the NPS server
+ * 4. Interactive + MFA prompt (Duo TOTP, rotating codes — Claude Code only):
  *    NPS_USERNAME   - Login username
  *    NPS_PASSWORD   - Login password
  *    NPS_MFA_PROMPT - Set to "true" to prompt for MFA code at startup
  *
- * 4. API key (headless — LIMITED, see note below):
- *    NPS_URL        - Base URL of the NPS server
+ * 5. API key (headless — LIMITED, see note below):
  *    NPS_USERNAME   - Application user login name
  *    NPS_API_KEY    - API key from the Application User's Authentication tab
  *    NOTE: API key auth has a known NPS bug where the JWT token is missing
@@ -78,7 +78,7 @@ function loadEnvFile(): void {
 
 /**
  * Auto-detect auth strategy from environment variables.
- * Priority: NPS_TOKEN > NPS_API_KEY > NPS_MFA_PROMPT > NPS_PASSWORD > error
+ * Priority: NPS_TOKEN > NPS_API_KEY > NPS_MFA_PROMPT > NPS_PASSWORD > browser
  */
 function detectAuthStrategy(): AuthStrategy {
   if (process.env.NPS_TOKEN) return "token";
@@ -108,14 +108,18 @@ export function loadConfig(): NpsConfig {
 
   const authStrategy = detectAuthStrategy();
 
+  // TLS: handle self-signed certs (common in NPS deployments)
+  const tlsReject = process.env.NPS_TLS_REJECT === "true";
+  if (!tlsReject) {
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+  }
+
+  const normalizedUrl = baseUrl.replace(/\/+$/, "");
+
   // Token and browser strategies don't need username/password
   if (authStrategy === "token" || authStrategy === "browser") {
-    const tlsReject = process.env.NPS_TLS_REJECT === "true";
-    if (!tlsReject) {
-      process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
-    }
     return {
-      baseUrl: baseUrl.replace(/\/+$/, ""),
+      baseUrl: normalizedUrl,
       username: username || "",
       password: "",
       preSuppliedToken,
@@ -125,6 +129,7 @@ export function loadConfig(): NpsConfig {
     };
   }
 
+  // Credential-based strategies need username
   if (!username) {
     throw new Error(
       "Missing required environment variable: NPS_USERNAME\n" +
@@ -133,7 +138,7 @@ export function loadConfig(): NpsConfig {
     );
   }
 
-  // Either API key or password is required for non-token/browser strategies
+  // Either API key or password is required for credential-based strategies
   if (!apiKey && !password) {
     throw new Error(
       "Missing authentication credentials. Configure one of these strategies:\n\n" +
@@ -151,15 +156,8 @@ export function loadConfig(): NpsConfig {
     );
   }
 
-  const tlsReject = process.env.NPS_TLS_REJECT === "true";
-
-  // Handle self-signed certs globally if not rejecting
-  if (!tlsReject) {
-    process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
-  }
-
   return {
-    baseUrl: baseUrl.replace(/\/+$/, ""), // strip trailing slash
+    baseUrl: normalizedUrl,
     username,
     password: password ?? "",
     mfaCode: process.env.NPS_MFA_CODE || "000000",

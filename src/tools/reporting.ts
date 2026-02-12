@@ -11,6 +11,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { npsApi, formatToolError } from "../client.js";
 import { platformName, formatDuration } from "../types.js";
 import type { SessionSearchResults } from "../types.js";
+import type { ManagedResource } from "../utils.js";
 
 interface NpsManagedAccountSearch {
   data: Array<{
@@ -26,6 +27,41 @@ interface NpsManagedAccountSearch {
     lastLogonTimestamp?: string;
     entityType?: number;
   }>;
+  recordsTotal: number;
+}
+
+interface NpsPolicy {
+  id: string;
+  name: string;
+  description?: string;
+  policyType?: number;
+  isDisabled?: boolean;
+  activityConfiguration?: { name?: string };
+  managedAccountPolicyJoin?: unknown[];
+  managedResourcePolicyJoin?: unknown[];
+  activityJoin?: unknown[];
+  userAndGroupCollectionPolicyJoin?: unknown[];
+  credentialPolicyJoin?: unknown[];
+}
+
+interface CredSearchRecord {
+  id?: string;
+  userName?: string;
+  displayName?: string;
+  samAccountName?: string;
+  domain?: string;
+  platform?: string;
+  age?: number;
+  passwordStatus?: number;
+  rotationType?: number;
+  lastPasswordChangeDateTimeUtc?: string;
+  nextPasswordChangeDateTimeUtc?: string;
+  lastVerifiedDateTimeUtc?: string;
+  managedType?: number;
+}
+
+interface CredSearchResult {
+  data: CredSearchRecord[];
   recordsTotal: number;
 }
 
@@ -344,25 +380,12 @@ export function registerReportingTools(server: McpServer): void {
     {},
     async () => {
       try {
-        interface NpsResource {
-          id: string;
-          name: string;
-          displayName?: string;
-          ipAddress?: string;
-          platformId?: string;
-          platform?: { name?: string };
-          portSsh?: number;
-          portRdp?: number;
-          portWinRm?: number;
-          host?: { ipAddress?: string };
-        }
-
-        const resources = await npsApi<NpsResource[]>(
+        const resources = await npsApi<ManagedResource[]>(
           "/api/v1/ManagedResource"
         );
 
         // Group by platform
-        const byPlatform: Record<string, NpsResource[]> = {};
+        const byPlatform: Record<string, ManagedResource[]> = {};
         for (const r of resources) {
           const platform =
             r.platform?.name || platformName(r.platformId || null);
@@ -412,20 +435,6 @@ export function registerReportingTools(server: McpServer): void {
     {},
     async () => {
       try {
-        interface NpsPolicy {
-          id: string;
-          name: string;
-          description?: string;
-          policyType?: number;
-          isDisabled?: boolean;
-          activityConfiguration?: { name?: string };
-          managedAccountPolicyJoin?: unknown[];
-          managedResourcePolicyJoin?: unknown[];
-          activityJoin?: unknown[];
-          userAndGroupCollectionPolicyJoin?: unknown[];
-          credentialPolicyJoin?: unknown[];
-        }
-
         const policies = await npsApi<NpsPolicy[]>(
           "/api/v1/AccessControlPolicy"
         );
@@ -507,26 +516,6 @@ export function registerReportingTools(server: McpServer): void {
     },
     async ({ take }) => {
       try {
-        interface CredSearchRecord {
-          id?: string;
-          userName?: string;
-          displayName?: string;
-          samAccountName?: string;
-          domain?: string;
-          platform?: string;
-          age?: number;
-          passwordStatus?: number;
-          rotationType?: number;
-          lastPasswordChangeDateTimeUtc?: string;
-          nextPasswordChangeDateTimeUtc?: string;
-          lastVerifiedDateTimeUtc?: string;
-          managedType?: number;
-        }
-        interface CredSearchResult {
-          data: CredSearchRecord[];
-          recordsTotal: number;
-        }
-
         const result = await npsApi<CredSearchResult>(
           "/api/v1/Credential/Search",
           { params: { skip: 0, take } }

@@ -6,19 +6,7 @@ import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { npsApi, formatToolError } from "../client.js";
 import { platformName, PLATFORMS } from "../types.js";
-
-interface NpsManagedResource {
-  id: string;
-  name: string;
-  displayName?: string;
-  ipAddress?: string;
-  platformId?: string;
-  platform?: { name?: string };
-  portSsh?: number;
-  portRdp?: number;
-  portWinRm?: number;
-  host?: { ipAddress?: string };
-}
+import type { ManagedResource } from "../utils.js";
 
 interface NpsAccessControlPolicy {
   id: string;
@@ -80,7 +68,7 @@ export function registerAdminTools(server: McpServer): void {
           dnsHostName: dnsHostName || hostAddress,
         };
 
-        const resource = await npsApi<NpsManagedResource>(
+        const resource = await npsApi<ManagedResource>(
           "/api/v1/ManagedResource",
           { method: "POST", body }
         );
