@@ -301,11 +301,12 @@ async function refreshToken(
   });
 
   if (!response.ok) {
-    // For token strategy, we can't re-authenticate — no credentials
-    if (config.authStrategy === "token") {
+    // For token and browser strategies, we can't re-authenticate — no credentials
+    if (config.authStrategy === "token" || config.authStrategy === "browser") {
       throw new Error(
-        "Token expired and cannot be refreshed. Update NPS_TOKEN with a new token.\n" +
-        "Run `npx nps-auth` to get a fresh token from browser login."
+        "Token expired and cannot be refreshed.\n" +
+        "Use the nps_login tool to log in again via your browser, " +
+        "or nps_set_token to provide a new token."
       );
     }
     // For other strategies, re-authenticate from scratch
@@ -337,6 +338,11 @@ export async function authenticate(config: NpsConfig): Promise<string> {
     case "interactive":
       finalToken = await authenticateInteractive(config);
       break;
+    case "browser":
+      throw new Error(
+        "Not authenticated. Use the nps_login tool to log in via your browser, " +
+        "or nps_set_token to provide a token directly."
+      );
     default:
       throw new Error(`Unknown auth strategy: ${config.authStrategy}`);
   }
@@ -382,6 +388,18 @@ export async function getToken(config: NpsConfig): Promise<string> {
   }
 
   return tokenState.token;
+}
+
+/**
+ * Directly set a token (for browser login or manual token injection).
+ * Parses JWT to determine expiry automatically.
+ */
+export function setToken(token: string): void {
+  tokenState = {
+    token,
+    acquiredAt: Date.now(),
+    expiresAt: parseJwtExp(token),
+  };
 }
 
 /**

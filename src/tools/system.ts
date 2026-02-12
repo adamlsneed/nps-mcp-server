@@ -52,7 +52,13 @@ export function registerSystemTools(server: McpServer): void {
         lines.push("");
 
         if (!tokenState) {
-          lines.push("Token: Not yet acquired (will authenticate on first API call)");
+          if (config.authStrategy === "browser") {
+            lines.push("Token: Awaiting browser login");
+            lines.push("  Use the nps_login tool to log in via your browser,");
+            lines.push("  or nps_set_token to provide a token directly.");
+          } else {
+            lines.push("Token: Not yet acquired (will authenticate on first API call)");
+          }
         } else {
           const now = Date.now();
           const ageMs = now - tokenState.acquiredAt;

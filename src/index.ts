@@ -56,6 +56,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
 // Tool registrations
+import { registerAuthTools } from "./tools/auth-tools.js";
 import { registerSystemTools } from "./tools/system.js";
 import { registerResourceTools } from "./tools/resources.js";
 import { registerSessionTools } from "./tools/sessions.js";
@@ -76,6 +77,7 @@ async function main() {
   });
 
   // Register all tool groups
+  registerAuthTools(server);
   registerSystemTools(server);
   registerResourceTools(server);
   registerSessionTools(server);

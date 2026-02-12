@@ -37,7 +37,7 @@ import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export type AuthStrategy = "token" | "interactive" | "interactive-prompt" | "apikey";
+export type AuthStrategy = "token" | "interactive" | "interactive-prompt" | "apikey" | "browser";
 
 export interface NpsConfig {
   baseUrl: string;
@@ -85,8 +85,7 @@ function detectAuthStrategy(): AuthStrategy {
   if (process.env.NPS_API_KEY) return "apikey";
   if (process.env.NPS_MFA_PROMPT === "true" && process.env.NPS_PASSWORD) return "interactive-prompt";
   if (process.env.NPS_PASSWORD) return "interactive";
-  // Will be caught by validation below
-  return "interactive";
+  return "browser";
 }
 
 export function loadConfig(): NpsConfig {
@@ -109,8 +108,8 @@ export function loadConfig(): NpsConfig {
 
   const authStrategy = detectAuthStrategy();
 
-  // Token strategy doesn't need username/password
-  if (authStrategy === "token") {
+  // Token and browser strategies don't need username/password
+  if (authStrategy === "token" || authStrategy === "browser") {
     const tlsReject = process.env.NPS_TLS_REJECT === "true";
     if (!tlsReject) {
       process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
@@ -134,18 +133,19 @@ export function loadConfig(): NpsConfig {
     );
   }
 
-  // Either API key, token, or password is required
-  if (!apiKey && !password && !preSuppliedToken) {
+  // Either API key or password is required for non-token/browser strategies
+  if (!apiKey && !password) {
     throw new Error(
       "Missing authentication credentials. Configure one of these strategies:\n\n" +
-        "  1. Pre-supplied token (any auth provider — SAML, OIDC, Duo Push):\n" +
-        '     NPS_TOKEN="<bearer-token-from-browser>"\n' +
-        "     Tip: Run `npx nps-auth` to get a token from browser login\n\n" +
-        "  2. Interactive + static MFA (lab, static TOTP):\n" +
+        "  1. Browser login (easiest — supports all auth methods):\n" +
+        "     Just set NPS_URL and use the nps_login tool\n\n" +
+        "  2. Pre-supplied token (any auth provider — SAML, OIDC, Duo Push):\n" +
+        '     NPS_TOKEN="<bearer-token-from-browser>"\n\n' +
+        "  3. Interactive + static MFA (lab, static TOTP):\n" +
         '     NPS_PASSWORD="password" NPS_MFA_CODE="000000"\n\n' +
-        "  3. Interactive + MFA prompt (rotating codes, Claude Code only):\n" +
+        "  4. Interactive + MFA prompt (rotating codes, Claude Code only):\n" +
         '     NPS_PASSWORD="password" NPS_MFA_PROMPT=true\n\n' +
-        "  4. API key (headless — LIMITED due to NPS role-claims bug):\n" +
+        "  5. API key (headless — LIMITED due to NPS role-claims bug):\n" +
         '     NPS_API_KEY="your-api-key"\n' +
         "     Note: Most endpoints return 403 due to missing role claims in JWT"
     );
