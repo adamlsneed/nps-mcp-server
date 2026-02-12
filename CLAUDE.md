@@ -73,9 +73,8 @@ Netwrix Privilege Secure (NPS) is a Privileged Access Management (PAM) solution 
 
 ## Lab Environment
 
-- **NPS Server:** `https://192.168.86.51:6500/`
-- **Admin Credentials:** admin / Temp123!
-- **Network:** 192.168.86.0/24 (servers), 192.168.1.0/24 (user network)
+- **NPS Server:** `https://your-nps-server:6500/`
+- **Admin Credentials:** Set in `.env` file (not committed)
 - **AD domains and Linux targets available for testing session creation and credential rotation**
 - **Self-signed certificates** — all HTTP calls must handle this
 

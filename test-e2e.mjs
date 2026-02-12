@@ -7,7 +7,7 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { existsSync, readFileSync } from "node:fs";
 
-const proc = spawn("node", ["dist/index.js"], { cwd: "/Users/adam/dev/NPS MCP Server", stdio: ["pipe", "pipe", "pipe"] });
+const proc = spawn("node", ["dist/index.js"], { stdio: ["pipe", "pipe", "pipe"] });
 let msgId = 0;
 const pending = new Map();
 const rl = createInterface({ input: proc.stdout });
@@ -32,10 +32,10 @@ async function run() {
   console.log(getText(r).substring(0, 200));
 
   // 2. Create session
-  console.log("\n=== Creating session to FS1.adamsneed.com ===\n");
+  console.log("\n=== Creating session ===\n");
   r = await callTool("nps_create_session", {
-    resourceName: "FS1.adamsneed.com",
-    activityName: "Activity Token for adamsneed Domain Admin Access",
+    resourceName: process.env.E2E_RESOURCE || "FS1.example.com",
+    activityName: process.env.E2E_ACTIVITY || "Login",
     note: "E2E test — RDP auto-save",
   });
   const createText = getText(r);

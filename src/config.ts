@@ -102,7 +102,7 @@ export function loadConfig(): NpsConfig {
     throw new Error(
       "Missing required environment variable: NPS_URL\n" +
         "Example:\n" +
-        '  NPS_URL="https://192.168.86.51:6500"'
+        '  NPS_URL="https://your-nps-server:6500"'
     );
   }
 

@@ -197,7 +197,7 @@ export function registerAuditTools(server: McpServer): void {
     "Get session history for a specific managed resource. Shows who accessed it, when, for how long, and what activity was used. Accepts either a resource ID (GUID) or name (DNS hostname).",
     {
       resourceId: z.string().optional().describe("The managed resource ID (GUID)"),
-      resourceName: z.string().optional().describe("Resource name or DNS hostname (e.g., 'FS1.adamsneed.com'). Resolves to ID automatically."),
+      resourceName: z.string().optional().describe("Resource name or DNS hostname (e.g., 'FS1.example.com'). Resolves to ID automatically."),
       startDate: z.string().optional().describe("Start date filter (ISO 8601)"),
       endDate: z.string().optional().describe("End date filter (ISO 8601)"),
       filterText: z.string().optional().describe("Search text to filter results"),

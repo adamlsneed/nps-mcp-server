@@ -30,9 +30,9 @@ The server supports 4 auth strategies, auto-detected from environment variables.
 Best for environments with "Not Required" MFA or static TOTP codes.
 
 ```bash
-NPS_URL=https://192.168.86.51:6500
+NPS_URL=https://your-nps-server:6500
 NPS_USERNAME=admin
-NPS_PASSWORD=Temp123!
+NPS_PASSWORD=YourPassword
 NPS_MFA_CODE=000000
 ```
 
@@ -41,9 +41,9 @@ NPS_MFA_CODE=000000
 Prompts for MFA code at startup via `/dev/tty`. Works with Duo TOTP, rotating codes, or any MFA that generates a one-time code.
 
 ```bash
-NPS_URL=https://192.168.86.51:6500
+NPS_URL=https://your-nps-server:6500
 NPS_USERNAME=admin
-NPS_PASSWORD=Temp123!
+NPS_PASSWORD=YourPassword
 NPS_MFA_PROMPT=true
 ```
 
@@ -54,7 +54,7 @@ NPS_MFA_PROMPT=true
 Use a bearer token obtained from a browser login. Works with SAML, OIDC, Duo Push, or any auth provider configured in NPS.
 
 ```bash
-NPS_URL=https://192.168.86.51:6500
+NPS_URL=https://your-nps-server:6500
 NPS_TOKEN=eyJhbGciOiJSUzI1NiIs...
 ```
 
@@ -73,7 +73,7 @@ The helper opens NPS in your browser, you log in with whatever provider is confi
 Application user auth. Bypasses MFA but has a **known NPS bug** where the JWT token is missing role claims, causing 403 on most endpoints.
 
 ```bash
-NPS_URL=https://192.168.86.51:6500
+NPS_URL=https://your-nps-server:6500
 NPS_USERNAME=AppName
 NPS_API_KEY=your-api-key-here
 ```
@@ -105,9 +105,9 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
       "command": "node",
       "args": ["/path/to/nps-mcp-server/dist/index.js"],
       "env": {
-        "NPS_URL": "https://192.168.86.51:6500",
+        "NPS_URL": "https://your-nps-server:6500",
         "NPS_USERNAME": "admin",
-        "NPS_PASSWORD": "Temp123!",
+        "NPS_PASSWORD": "YourPassword",
         "NPS_MFA_CODE": "000000",
         "NODE_TLS_REJECT_UNAUTHORIZED": "0"
       }
@@ -125,7 +125,7 @@ Or with a pre-supplied token:
       "command": "node",
       "args": ["/path/to/nps-mcp-server/dist/index.js"],
       "env": {
-        "NPS_URL": "https://192.168.86.51:6500",
+        "NPS_URL": "https://your-nps-server:6500",
         "NPS_TOKEN": "eyJhbGciOiJSUzI1NiIs...",
         "NODE_TLS_REJECT_UNAUTHORIZED": "0"
       }
@@ -145,9 +145,9 @@ Add to `.mcp.json` in your project root or `~/.claude/claude_code_config.json`:
       "command": "node",
       "args": ["/path/to/nps-mcp-server/dist/index.js"],
       "env": {
-        "NPS_URL": "https://192.168.86.51:6500",
+        "NPS_URL": "https://your-nps-server:6500",
         "NPS_USERNAME": "admin",
-        "NPS_PASSWORD": "Temp123!",
+        "NPS_PASSWORD": "YourPassword",
         "NPS_MFA_CODE": "000000",
         "NODE_TLS_REJECT_UNAUTHORIZED": "0"
       }

@@ -8,7 +8,7 @@ metadata:
   references:
     - api-docs: ./reference/api-docs/
     - product-docs: ./reference/product-docs/
-    - lab-endpoint: https://192.168.86.51:6500
+    - lab-endpoint: https://your-nps-server:6500
 ---
 
 # NPS MCP Tool Builder
@@ -88,12 +88,12 @@ server.tool(
 
 ```bash
 # Quick auth test
-curl -k -X POST https://192.168.86.51:6500/signinBody \
+curl -k -X POST https://your-nps-server:6500/signinBody \
   -H "Content-Type: application/json" \
-  -d '{"Login":"admin","Password":"Temp123!"}'
+  -d '{"Login":"admin","Password":"YourPassword"}'
 
 # Version check (after getting token)
-curl -k https://192.168.86.51:6500/api/v1/Version \
+curl -k https://your-nps-server:6500/api/v1/Version \
   -H "Authorization: Bearer <token>"
 ```
 

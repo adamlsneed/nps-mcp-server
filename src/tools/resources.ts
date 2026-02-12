@@ -96,7 +96,7 @@ export function registerResourceTools(server: McpServer): void {
     {
       resourceName: z
         .string()
-        .describe("Resource name, DNS hostname, or partial match (e.g., 'fs1', 'FS1.adamsneed.com')"),
+        .describe("Resource name, DNS hostname, or partial match (e.g., 'fs1', 'FS1.example.com')"),
     },
     async ({ resourceName }) => {
       try {

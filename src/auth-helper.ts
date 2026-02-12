@@ -158,7 +158,7 @@ Steps:
     console.error(
       "Error: NPS URL not specified.\n" +
       "Provide it via --url flag or set NPS_URL in .env / environment.\n" +
-      "Example: npx nps-auth --url https://192.168.86.51:6500"
+      "Example: npx nps-auth --url https://your-nps-server:6500"
     );
     process.exit(1);
   }
