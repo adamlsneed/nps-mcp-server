@@ -30,3 +30,4 @@ test-*.mjs
 *.pem
 *.key
 *.p12
+reference/
